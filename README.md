@@ -69,17 +69,14 @@ BILLING_API_TOKEN = env("BILLING_API_TOKEN", default="change-me-in-production")
 
 ### 2. Configure URLs
 
-Include the Billing API router in your main `urls.py`. Since `billable` uses Django Ninja, you should add its router to your main API instance.
+Include billable URLs in your main `urls.py`:
 
 ```python
-from ninja import NinjaAPI
-from billable.api import router as billing_router
-
-api = NinjaAPI()
-api.add_router("/billing/", billing_router)
+from django.urls import path, include
 
 urlpatterns = [
-    path("api/v1/", api.urls),
+    # Mounts the API at /api/v1/billing/
+    path("api/v1/billing/", include("billable.urls")),
 ]
 ```
 

@@ -15,12 +15,45 @@ Powerful and flexible monetization module for Django projects, developed with an
 ## Installation and Integration
 
 1. Add `billable` to `INSTALLED_APPS` in `settings.py`.
-2. Connect the router in `urls.py`:
+2. Include billable URLs in your main `urls.py`:
    ```python
-   from billable.api import router as billing_router
-   api.add_router("/billing", billing_router)
+   from django.urls import path, include
+   
+   urlpatterns = [
+       # Mounts the API at /api/v1/billing/
+       path("api/v1/billing/", include("billable.urls")),
+   ]
    ```
 3. Run migrations: `python manage.py migrate billable`.
+
+## Configuration
+
+### 1. Update `settings.py`
+
+Add `billable` to your apps and configure the settings:
+
+```python
+INSTALLED_APPS = [
+    # ...
+    "billable",
+]
+
+# Required: Token for Bearer authentication
+BILLING_API_TOKEN = env("BILLING_API_TOKEN")
+
+# Optional: Manage Swagger/OpenAPI documentation
+BILLING_SHOW_DOCS = True  # Set to False to disable /docs and /redoc
+BILLING_API_TITLE = "My Project Billing API"
+```
+
+## Swagger UI
+
+By default, interactive documentation will be available at:
+
+- **Swagger**: `http://localhost:8000/api/v1/billing/docs`
+- **ReDoc**: `http://localhost:8000/api/v1/billing/redoc`
+
+To disable documentation (e.g., in production), set `BILLING_SHOW_DOCS = False` in your `settings.py`.
 
 ## Main API Endpoints
 
