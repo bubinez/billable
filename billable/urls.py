@@ -19,7 +19,6 @@ API_TITLE = billing_settings.API_TITLE
 api = NinjaAPI(
     title=API_TITLE,
     docs_url="/docs" if SHOW_DOCS else None,
-    redoc_url="/redoc" if SHOW_DOCS else None,
     urls_namespace="billable_default_api",  # To avoid conflicts with other APIs
 )
 

@@ -42,7 +42,7 @@ INSTALLED_APPS = [
 BILLING_API_TOKEN = env("BILLING_API_TOKEN")
 
 # Optional: Manage Swagger/OpenAPI documentation
-BILLING_SHOW_DOCS = True  # Set to False to disable /docs and /redoc
+BILLING_SHOW_DOCS = True  # Set to False to disable /docs
 BILLING_API_TITLE = "My Project Billing API"
 ```
 
@@ -51,7 +51,6 @@ BILLING_API_TITLE = "My Project Billing API"
 By default, interactive documentation will be available at:
 
 - **Swagger**: `http://localhost:8000/api/v1/billing/docs`
-- **ReDoc**: `http://localhost:8000/api/v1/billing/redoc`
 
 To disable documentation (e.g., in production), set `BILLING_SHOW_DOCS = False` in your `settings.py`.
 
