@@ -26,7 +26,16 @@ api = NinjaAPI(
 # Empty string "" means the router will be connected to the root of this API
 api.add_router("", billing_router)
 
-# 4. Export urlpatterns for use in include()
-urlpatterns = [
-    path("", api.urls),
-]
+# 4. Export api object and api.urls for flexible usage
+# The api object can be imported to add additional routers or exception handlers if needed
+# api.urls returns a tuple (urlpatterns, app_name, namespace)
+# When used directly in path(), Django automatically handles namespace registration correctly
+# This matches the working pattern: path("api/v1/", api.urls)
+
+# Export api object for advanced usage (adding routers, exception handlers, etc.)
+__all__ = ['api', 'urlpatterns']
+
+# Export api.urls as urlpatterns for direct use in path()
+# Usage: path("api/v1/billing/", billable.urls.urlpatterns)
+# or: from billable.urls import urlpatterns; path("api/v1/billing/", urlpatterns)
+urlpatterns = api.urls
