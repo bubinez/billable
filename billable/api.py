@@ -9,11 +9,11 @@ import logging
 from typing import List
 
 from django.contrib.auth import get_user_model
-from django.conf import settings
 from django.db import IntegrityError
 from ninja import Router
 from ninja.security import HttpBearer
 
+from .conf import billing_settings
 from .models import Order, Product, UserProduct, TrialHistory, Referral
 from .schemas import (
     BalanceFeatureSchema, 
@@ -38,7 +38,7 @@ class APIKeyAuth(HttpBearer):
     """Token authentication in the Authorization: Bearer <token> header."""
     
     def authenticate(self, request, token):
-        if token == settings.BILLING_API_TOKEN:
+        if token == billing_settings.API_TOKEN:
             return token
         return None
 

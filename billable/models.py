@@ -7,10 +7,11 @@ detailed usage tracking (e.g., "30 of 100 applications"), and a flexible pricing
 from __future__ import annotations
 
 import hashlib
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+
+from .conf import billing_settings
 
 
 class Product(models.Model):
@@ -190,7 +191,7 @@ class Order(models.Model):
 
     # User relationship
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        billing_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -392,7 +393,7 @@ class UserProduct(models.Model):
     """
 
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        billing_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -540,7 +541,7 @@ class ProductUsage(models.Model):
 
     # User and user product relationships
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        billing_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -739,14 +740,14 @@ class Referral(models.Model):
     """
 
     referrer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        billing_settings.USER_MODEL,
         on_delete=models.CASCADE,
         related_name="referrals_made",
         verbose_name="Inviter",
         help_text="User who invited another user",
     )
     referee = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        billing_settings.USER_MODEL,
         on_delete=models.CASCADE,
         related_name="referrals_received",
         verbose_name="Invitee",
