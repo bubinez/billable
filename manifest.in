@@ -1,0 +1,5 @@
+include README.md
+recursive-include billable/migrations *
+recursive-include billable/templates 
+global-exclude __pycache__
+global-exclude *.py[co]

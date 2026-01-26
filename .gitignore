@@ -1,0 +1,11 @@
+# .gitignore
+__pycache__/
+.egg-info
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+.idea/
+.vscode/
+.env
+db.sqlite3
