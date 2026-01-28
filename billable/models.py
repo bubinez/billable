@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
-from .conf import billing_settings
+from .conf import billable_settings
 
 
 class Product(models.Model):
@@ -191,7 +191,7 @@ class Order(models.Model):
 
     # User relationship
     user = models.ForeignKey(
-        billing_settings.USER_MODEL,
+        billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -261,7 +261,7 @@ class Order(models.Model):
 
     def __str__(self) -> str:
         """Return human-readable representation."""
-        return f"Order #{self.id} - {self.user.chat_id} ({self.total_amount} {self.currency})"
+        return f"Order #{self.id} - user_id={self.user_id} ({self.total_amount} {self.currency})"
 
     def is_paid(self) -> bool:
         """
@@ -393,7 +393,7 @@ class UserProduct(models.Model):
     """
 
     user = models.ForeignKey(
-        billing_settings.USER_MODEL,
+        billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -463,7 +463,9 @@ class UserProduct(models.Model):
 
     def __str__(self) -> str:
         """Return human-readable representation."""
-        return f"{self.user.chat_id} - {self.product.name}"
+        u = self.user_id if self.user_id else "?"
+        p = self.product.name if self.product_id else "?"
+        return f"{u} - {p}"
 
     def clean(self) -> None:
         """User product fields validation."""
@@ -478,17 +480,37 @@ class UserProduct(models.Model):
             bool: True if the product has expired.
         """
         if self.product.product_type == Product.ProductType.PERIOD:
-            expired = bool(self.expires_at and timezone.now() > self.expires_at)
-            # Lazy deactivation on access, to sync flag with actual status
-            if expired and self.is_active:
-                try:
-                    self.is_active = False
-                    self.save(update_fields=["is_active"])
-                except Exception:
-                    # Do not escalate errors in model
-                    pass
-            return expired
+            return self._is_done_and_deactivate_if_needed()
         return False
+
+    def _is_done_and_deactivate_if_needed(self) -> bool:
+        """
+        Checks whether the user product is "done" (expired or exhausted) and lazily deactivates it.
+
+        "Done" conditions:
+        - PERIOD: expires_at exists and is in the past.
+        - QUANTITY: used_quantity >= total_quantity.
+
+        Returns:
+            bool: True if the product is done (expired/exhausted), False otherwise.
+        """
+        if self.product.product_type == Product.ProductType.PERIOD:
+            is_done = bool(self.expires_at and timezone.now() > self.expires_at)
+        elif self.product.product_type == Product.ProductType.QUANTITY:
+            is_done = self.used_quantity >= self.total_quantity
+        else:
+            return False
+
+        # Lazy deactivation on access, to sync flag with actual status
+        if is_done and self.is_active:
+            try:
+                self.is_active = False
+                self.save(update_fields=["is_active"])
+            except Exception:
+                # Do not escalate errors in model
+                pass
+
+        return is_done
 
     def can_use(self) -> bool:
         """
@@ -501,9 +523,9 @@ class UserProduct(models.Model):
             return False
 
         if self.product.product_type == Product.ProductType.QUANTITY:
-            return self.used_quantity < self.total_quantity
+            return not self._is_done_and_deactivate_if_needed()
         elif self.product.product_type == Product.ProductType.PERIOD:
-            return not self.is_expired()
+            return not self._is_done_and_deactivate_if_needed()
         else:  # unlimited
             return True
 
@@ -541,7 +563,7 @@ class ProductUsage(models.Model):
 
     # User and user product relationships
     user = models.ForeignKey(
-        billing_settings.USER_MODEL,
+        billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
         verbose_name="User",
     )
@@ -592,7 +614,7 @@ class ProductUsage(models.Model):
 
     def __str__(self) -> str:
         """Return human-readable representation."""
-        return f"{self.user.chat_id} - {self.user_product.product.name} - {self.action_type}"
+        return f"user_id={self.user_id} - {self.user_product.product.name} - {self.action_type}"
 
 
 class TrialHistory(models.Model):
@@ -731,6 +753,76 @@ class TrialHistory(models.Model):
         return await cls.objects.filter(lookups).aexists()
 
 
+class ExternalIdentity(models.Model):
+    """
+    External identity mapping for integrations.
+
+    Stores a stable external identifier for a given provider (telegram, max, n8n, etc.)
+    with optional linkage to the local Django user model.
+
+    Uniqueness is enforced on (provider, external_id) to avoid collisions across
+    different identity sources.
+    """
+
+    provider = models.CharField(
+        max_length=50,
+        default="default",
+        db_index=True,
+        blank=True,
+        verbose_name="Provider",
+        help_text="Identity source/provider name (e.g., 'telegram', 'max', 'n8n')",
+    )
+    external_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        verbose_name="External ID",
+        help_text="Stable external identifier within the provider scope",
+    )
+    user = models.ForeignKey(
+        billable_settings.USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="billable_external_identities",
+        verbose_name="User",
+        help_text="Optional link to the local Django user model (if applicable)",
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Metadata",
+        help_text="Additional identity data (e.g., workspace, username, raw payload)",
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Creation Date",
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Update Date",
+    )
+
+    class Meta:
+        db_table = "billable_external_identities"
+        verbose_name = "External Identity"
+        verbose_name_plural = "External Identities"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "external_id"],
+                name="billable_extid_provider_external_id_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["provider"], name="billable_extid_provider_idx"),
+            models.Index(fields=["external_id"], name="billable_extid_external_id_idx"),
+            models.Index(fields=["user"], name="billable_extid_user_idx"),
+        ]
+
+    def __str__(self) -> str:
+        """Return human-readable representation."""
+        return f"{self.provider}:{self.external_id}"
+
+
 class Referral(models.Model):
     """
     Referral program model.
@@ -740,14 +832,14 @@ class Referral(models.Model):
     """
 
     referrer = models.ForeignKey(
-        billing_settings.USER_MODEL,
+        billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
         related_name="referrals_made",
         verbose_name="Inviter",
         help_text="User who invited another user",
     )
     referee = models.ForeignKey(
-        billing_settings.USER_MODEL,
+        billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
         related_name="referrals_received",
         verbose_name="Invitee",
@@ -792,7 +884,7 @@ class Referral(models.Model):
     def __str__(self) -> str:
         """Return human-readable representation."""
         bonus_status = "✓" if self.bonus_granted else "✗"
-        return f"{self.referrer.chat_id} → {self.referee.chat_id} (bonus: {bonus_status})"
+        return f"{self.referrer_id} → {self.referee_id} (bonus: {bonus_status})"
 
     def grant_bonus(self) -> None:
         """

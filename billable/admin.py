@@ -1,13 +1,13 @@
 """Django admin registrations for billable models.
 
-Provides admin interfaces for Product, UserProduct, Order, OrderItem, ProductUsage, Referral and TrialHistory.
+Provides admin interfaces for Product, UserProduct, Order, OrderItem, ProductUsage, Referral, TrialHistory and ExternalIdentity.
 """
 
 from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import Order, OrderItem, Product, ProductUsage, Referral, TrialHistory, UserProduct
+from .models import ExternalIdentity, Order, OrderItem, Product, ProductUsage, Referral, TrialHistory, UserProduct
 
 
 @admin.register(Product)
@@ -36,7 +36,7 @@ class OrderAdmin(admin.ModelAdmin):
 
     list_display = ("id", "user", "total_amount", "currency", "status", "payment_method", "created_at", "paid_at")
     list_filter = ("status", "payment_method", "created_at")
-    search_fields = ("id", "user__chat_id", "payment_id")
+    search_fields = ("id", "user_id", "payment_id")
     readonly_fields = ("created_at",)
     date_hierarchy = "created_at"
     inlines = (OrderItemInline,)
@@ -67,7 +67,7 @@ class UserProductAdmin(admin.ModelAdmin):
         "used_quantity",
     )
     list_filter = ("is_active", "product__product_type", "purchased_at")
-    search_fields = ("user__chat_id", "product__name")
+    search_fields = ("user_id", "product__name")
     readonly_fields = ("purchased_at",)
     raw_id_fields = ("user", "product", "order_item")
     date_hierarchy = "purchased_at"
@@ -79,7 +79,7 @@ class ProductUsageAdmin(admin.ModelAdmin):
 
     list_display = ("id", "user", "user_product", "action_type", "action_id", "used_at")
     list_filter = ("action_type", "used_at")
-    search_fields = ("user__chat_id", "action_type", "action_id")
+    search_fields = ("user_id", "action_type", "action_id")
     readonly_fields = ("used_at",)
     raw_id_fields = ("user", "user_product")
     date_hierarchy = "used_at"
@@ -101,13 +101,25 @@ class TrialHistoryAdmin(admin.ModelAdmin):
     identity_hash_display.short_description = "Hash"
 
 
+@admin.register(ExternalIdentity)
+class ExternalIdentityAdmin(admin.ModelAdmin):
+    """Admin configuration for ExternalIdentity."""
+
+    list_display = ("id", "provider", "external_id", "user", "created_at", "updated_at")
+    list_filter = ("provider", "created_at", "updated_at")
+    search_fields = ("provider", "external_id", "user_id")
+    readonly_fields = ("created_at", "updated_at")
+    raw_id_fields = ("user",)
+    date_hierarchy = "created_at"
+
+
 @admin.register(Referral)
 class ReferralAdmin(admin.ModelAdmin):
     """Admin configuration for Referral."""
 
     list_display = ("id", "referrer", "referee", "bonus_granted", "bonus_granted_at", "created_at")
     list_filter = ("bonus_granted", "created_at", "bonus_granted_at")
-    search_fields = ("referrer__chat_id", "referee__chat_id")
+    search_fields = ("referrer_id", "referee_id")
     readonly_fields = ("created_at", "bonus_granted_at")
     raw_id_fields = ("referrer", "referee")
     date_hierarchy = "created_at"

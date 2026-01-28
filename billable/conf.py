@@ -15,7 +15,7 @@ class AppSettings:
 
     @property
     def API_TOKEN(self):
-        return getattr(settings, "BILLING_API_TOKEN", None)
+        return getattr(settings, "BILLABLE_API_TOKEN", None)
 
     @property
     def USER_MODEL(self):
@@ -27,12 +27,12 @@ class AppSettings:
 
     @property
     def SHOW_DOCS(self):
-        return getattr(settings, "BILLING_SHOW_DOCS", True)
+        return getattr(settings, "BILLABLE_SHOW_DOCS", True)
     
     @property
     def API_TITLE(self):
-        return getattr(settings, "BILLING_API_TITLE", "Billable Engine API")
+        return getattr(settings, "BILLABLE_API_TITLE", "Billable Engine API")
 
 
 # Create singleton instance
-billing_settings = AppSettings()
+billable_settings = AppSettings()

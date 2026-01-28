@@ -8,11 +8,11 @@ logic is encapsulated within this package.
 from django.urls import path
 from ninja import NinjaAPI
 from .api import router as billing_router
-from .conf import billing_settings
+from .conf import billable_settings
 
-# 1. Read settings from billing_settings wrapper
-SHOW_DOCS = billing_settings.SHOW_DOCS
-API_TITLE = billing_settings.API_TITLE
+# 1. Read settings from billable_settings wrapper
+SHOW_DOCS = billable_settings.SHOW_DOCS
+API_TITLE = billable_settings.API_TITLE
 
 # 2. Create API instance
 # If SHOW_DOCS=False, pass None, which disables documentation path generation

@@ -29,8 +29,7 @@ Designed to work seamlessly with orchestrators like **n8n**, but fully usable as
 - 📙 **[API & Models Reference](doc/reference.md)**
   Database schema, Configuration variables, and REST API specification.
 
-- 📋 **[Changelog](CHANGELOG.md)**
-  History of changes and refactoring logs.
+- 📋 **Changelog**: See repository releases or git history.
 
 ---
 
@@ -61,10 +60,10 @@ INSTALLED_APPS = [
 ]
 
 # Required: Security token for the REST API
-BILLING_API_TOKEN = env("BILLING_API_TOKEN", default="change-me-in-production")
+BILLABLE_API_TOKEN = env("BILLABLE_API_TOKEN", default="change-me-in-production")
 
 # Optional: Defaults to "auth.User"
-# BILLING_USER_MODEL = "custom_users.User" 
+# BILLABLE_USER_MODEL = "custom_users.User" 
 ```
 
 ### 2. Configure URLs
@@ -133,6 +132,9 @@ order = OrderService.create_order(
 
 ### REST API Usage
 If you are using **n8n** or a frontend:
+
+**Identify user by external identity (recommended first step):**
+`POST /api/v1/billing/identify`
 
 **Get Balance:**
 `GET /api/v1/billing/balance` (Headers: `Authorization: Bearer <TOKEN>`)

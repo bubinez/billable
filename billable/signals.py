@@ -17,7 +17,7 @@ order_confirmed = Signal()
 quota_consumed = Signal()
 
 # Sent after trial period activation
-# Arguments: user_id, telegram_id, products (List[str])
+# Arguments: user_id (int), products (List[str])
 trial_activated = Signal()
 
 # Sent when a product is deactivated (expired or exhausted)

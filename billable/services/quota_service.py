@@ -414,25 +414,21 @@ class QuotaService:
     def activate_trial(
         cls, 
         user_id: int, 
-        telegram_id: str | None = None, 
         identities: dict[str, str | int] | None = None,
         sku: str | None = None
     ) -> dict[str, Any]:
         """
         Activates a free trial or specific gift product for a user.
-        
+
         Args:
             user_id: Django User ID.
-            external_id: Optional external ID for TrialHistory check (backward compatibility).
-            identities: Dictionary of identities for trial check.
+            identities: Dictionary of {provider: external_id} for trial check and history.
             sku: Specific product SKU to grant. If not provided, searches for products with is_trial metadata.
-            
+
         Returns:
             dict[str, Any]: Activation result.
         """
         ids_to_check = identities.copy() if identities else {}
-        if telegram_id:
-            ids_to_check['telegram'] = telegram_id
 
         if TrialHistory.has_used_trial(identities=ids_to_check):
             return {
@@ -483,12 +479,7 @@ class QuotaService:
                         )
 
             # Send signal about trial activation
-            trial_activated.send(
-                sender=cls, 
-                user_id=user_id, 
-                telegram_id=telegram_id, 
-                products=activated
-            )
+            trial_activated.send(sender=cls, user_id=user_id, products=activated)
 
             return {
                 "success": True,
@@ -500,25 +491,22 @@ class QuotaService:
     async def aactivate_trial(
         cls, 
         user_id: int, 
-        telegram_id: str | None = None, 
         identities: dict[str, str | int] | None = None,
         sku: str | None = None
     ) -> dict[str, Any]:
         """
         Async version: Activates a free trial or specific gift product for a user.
-        
+
         Args:
             user_id: Django User ID.
-            identities: Dictionary of identities for trial check.
+            identities: Dictionary of {provider: external_id} for trial check and history.
             sku: Specific product SKU to grant. If not provided, searches for products with is_trial metadata.
-            
+
         Returns:
             dict[str, Any]: Activation result.
         """
         # 1. Асинхронные проверки (Read operations)
         ids_to_check = identities.copy() if identities else {}
-        if telegram_id:
-            ids_to_check['telegram'] = telegram_id
 
         if await TrialHistory.has_used_trial_async(identities=ids_to_check):
             return {
@@ -546,7 +534,7 @@ class QuotaService:
         # 3. Изолированная синхронная транзакция
         try:
             result = await cls._activate_trial_transactionally(
-                user_id, telegram_id, ids_to_check, products_list
+                user_id, ids_to_check, products_list
             )
         except Exception as e:
             logger.error(f"Error activating trial: {e}", exc_info=True)
@@ -563,7 +551,6 @@ class QuotaService:
     def _activate_trial_transactionally(
         cls,
         user_id: int,
-        telegram_id: str | None,
         ids_to_check: dict[str, str | int],
         products_list: list[Product]
     ) -> dict[str, Any]:
@@ -598,12 +585,7 @@ class QuotaService:
                         )
 
             # Send signal about trial activation
-            trial_activated.send(
-                sender=cls, 
-                user_id=user_id, 
-                telegram_id=telegram_id, 
-                products=activated
-            )
+            trial_activated.send(sender=cls, user_id=user_id, products=activated)
 
             return {
                 "success": True,

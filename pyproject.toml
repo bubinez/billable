@@ -13,7 +13,19 @@ dependencies = [
     "django-ninja>=1.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-django>=4.5",
+    "pytest-asyncio>=0.21",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "billable.tests.test_settings"
+pythonpath = ["."]
+addopts = "-v"
+asyncio_mode = "auto"
 
 [tool.setuptools.packages.find]
 where = ["."]              
-include = ["billable*"]    
+include = ["billable*"]     

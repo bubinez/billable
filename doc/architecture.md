@@ -8,12 +8,18 @@ The module is designed as an isolated **Billing Engine** responsible for rights 
 
 It adheres to the **"Detachable"** principle: the module does not contain the business logic of a specific product (e.g., generating a report) but delegates orchestration to external systems (e.g., n8n, Airflow) or client applications.
 
+**Terminology**: In this module, *user* denotes the **Billing account** — the entity to which orders, quotas, and product rights are attributed.
+
 ---
 
 ## Business Processes
 
 ### 1. Onboarding and Identity
-*   **External Identification**: The module works with abstract user identities. Orchestrators (messaging bots, web apps) or specialized identity modules handle user creation.
+*   **External Identification**: The module works with abstract user identities. Orchestrators (messaging bots, web apps, n8n) call the billing API with an external identity (provider + external_id).
+*   **ExternalIdentity mapping**: The module stores external identifiers in `ExternalIdentity` and can optionally link them to `settings.AUTH_USER_MODEL`.
+    *   `provider` is a string (e.g., `telegram`, `max`, `n8n`). If not provided, it defaults to `"default"`.
+    *   Uniqueness is enforced for `(provider, external_id)`.
+*   **Identify flow**: Orchestrators should call `POST /identify` at the start of a flow. The module always ensures a local `User` exists (creates and links if missing) and returns `user_id` for subsequent billing calls.
 *   **Trial Accruals**: "First report for free" logic is implemented by granting products with the `trial` feature.
 *   **Abuse Protection**: The system checks trial usage history via the `TrialHistory` model using SHA-256 identity hashes. This protects against trial reuse across different providers or accounts.
 *   **Quota Check**: Before offering services, the system checks the user's quota balance by feature name.

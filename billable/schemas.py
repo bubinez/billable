@@ -111,7 +111,9 @@ class OrderSchema(BaseSchema):
 
 class OrderCreateSchema(BaseModel):
     """Schema for creating a new order."""
-    user_id: int
+    user_id: int | None = None
+    external_id: str | None = None
+    provider: str | None = None
     products: list[dict[str, Any]] = Field(..., json_schema_extra={"help_text": "List of {'sku': str, 'quantity': int}"})
     metadata: dict[str, Any] | None = None
 
@@ -125,7 +127,9 @@ class OrderConfirmSchema(BaseModel):
 
 class QuotaConsumeSchema(BaseModel):
     """Schema for quota consumption."""
-    user_id: int
+    user_id: int | None = None
+    external_id: str | None = None
+    provider: str | None = None
     feature: str
     action_type: str
     action_id: str | None = None
@@ -135,23 +139,55 @@ class QuotaConsumeSchema(BaseModel):
 
 class QuotaCheckSchema(BaseModel):
     """Schema for quota check."""
-    user_id: int
+    user_id: int | None = None
+    external_id: str | None = None
+    provider: str | None = None
     feature: str
 
 
 class TrialGrantSchema(BaseModel):
     """Schema for trial grant."""
-    user_id: int
-    telegram_id: str | None = None
-    identities: dict[str, str | int] | None = None
+    user_id: int | None = None
+    external_id: str | None = None
+    provider: str | None = None
     sku: str | None = None
     grant_type: str = "trial"
 
 
+class IdentifySchemaIn(BaseModel):
+    """Schema for user identification/creation by external identity."""
+
+    provider: str | None = None
+    external_id: str
+    profile: dict[str, Any] | None = None
+
+
+class IdentifySchemaOut(BaseModel):
+    """Schema for user identification response."""
+
+    user_id: int
+    identity_id: int
+    provider: str
+    external_id: str
+    created_identity: bool
+    created_user: bool
+    trial_eligible: bool
+    metadata: dict[str, Any]
+
+
 class ReferralAssignSchema(BaseModel):
-    """Schema for assigning a referral link."""
-    referrer_id: int
-    referee_id: int
+    """
+    Schema for assigning a referral link.
+
+    Accepts either:
+    - referrer_id + referee_id (billable user IDs), or
+    - provider + referrer_external_id + referee_external_id (resolved via ExternalIdentity).
+    """
+    referrer_id: int | None = None
+    referee_id: int | None = None
+    provider: str | None = None
+    referrer_external_id: str | None = None
+    referee_external_id: str | None = None
     metadata: dict[str, Any] | None = None
 
 

@@ -9,7 +9,7 @@ User = get_user_model()
 
 @pytest.fixture
 def test_user(db):
-    return User.objects.create(username="testuser", chat_id=123456789)
+    return User.objects.create(username="testuser")
 
 @pytest.fixture
 def quantity_product(db):
@@ -77,7 +77,7 @@ class TestQuotaService:
     def test_activate_trial_success(self, test_user, trial_product):
         result = QuotaService.activate_trial(
             user_id=test_user.id,
-            telegram_id="123456789"
+            identities={"telegram": "123456789"},
         )
         
         assert result["success"] is True
@@ -92,7 +92,7 @@ class TestQuotaService:
         
         result = QuotaService.activate_trial(
             user_id=test_user.id,
-            telegram_id="123456789"
+            identities={"telegram": "123456789"},
         )
         
         assert result["success"] is False

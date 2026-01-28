@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from django.db import connection
 from django.utils import timezone
 from django.db.models import Sum, Q
 
@@ -38,8 +39,10 @@ class UserProductService:
         ).select_related('product')
 
         if feature:
-            # Use __contains for Postgres array lookup in metadata.features
-            qs = qs.filter(product__metadata__features__contains=[feature])
+            if connection.vendor == "postgresql":
+                qs = qs.filter(product__metadata__features__contains=[feature])
+            else:
+                qs = qs.filter(product__metadata__icontains=feature)
 
         # Filter out expired products by time (lazy deactivation in the model helps,
         # but it's better to cut them off here as well for accuracy)
@@ -49,6 +52,34 @@ class UserProductService:
         )
 
         return list(qs)
+
+    @classmethod
+    async def aget_user_active_products(cls, user_id: int, feature: str | None = None) -> list[UserProduct]:
+        """
+        Async version: returns a list of a user's active products.
+
+        Args:
+            user_id: User ID.
+            feature: Optional filter by feature.
+
+        Returns:
+            List of active UserProducts.
+        """
+        qs = UserProduct.objects.filter(
+            user_id=user_id,
+            is_active=True,
+        ).select_related("product")
+
+        if feature:
+            if connection.vendor == "postgresql":
+                qs = qs.filter(product__metadata__features__contains=[feature])
+            else:
+                qs = qs.filter(product__metadata__icontains=feature)
+
+        now = timezone.now()
+        qs = qs.filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+
+        return [up async for up in qs.aiterator()]
 
     @classmethod
     def get_balance_summary(cls, user_id: int) -> dict[str, Any]:
