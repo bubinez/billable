@@ -22,23 +22,69 @@ The module relies on standard Django settings.
 All database tables are prefixed with `billable_`. In every model, *user* (FK to `settings.AUTH_USER_MODEL`) denotes the **Billing account** — the entity to which orders and product rights are attributed.
 
 ### Product (`billable_products`)
-The catalog of available items.
+The catalog of available resources.
 
-- **`sku`** *(CharField, unique)*: String identifier for integration (e.g., `premium_monthly`).
+- **`product_key`** *(CharField, PK)*: Unique string identifier for accounting (e.g., `diamonds`, `vip_access`). Noun, singular.
 - **`name`** / **`description`**: Display fields.
 - **`product_type`** *(Choice)*:
-    - `PERIOD`: Subscription-based (requires `period_days`).
-    - `QUANTITY`: Consumable packs (requires `quantity`).
-    - `UNLIMITED`: Permanent access or audit-only items.
-- **`price`** / **`currency`**: Cost definitions.
-- **`is_active`**: Boolean flag for soft deletion.
+    - `PERIOD`: Time-based access.
+    - `QUANTITY`: Consumable units.
+    - `UNLIMITED`: Permanent access.
+- **`is_active`**: Boolean flag. If False, cannot be used in new offers.
+- **`created_at`**: Timestamp.
 - **`metadata`** *(JSONField)*: Stores configuration.
-    - Key `features`: List of feature strings (e.g., `["pdf_export", "ai_analysis"]`).
+    - Key `features`: List of feature strings.
+
+**Note**: Product does NOT contain price or quantity. These are defined in Offers.
+
+### Offer (`billable_offers`)
+Marketing packages that bundle products.
+
+- **`sku`** *(CharField, PK)*: Commercial identifier.
+    - Prefixes: `off_` (base), `pack_` (bundle), `promo_` (sale).
+- **`name`**: Display name (e.g., "Premium Bundle").
+- **`price`** / **`currency`**: Cost (EUR, USD, XTR, INTERNAL).
+- **`image`** / **`description`**: UI metadata.
+- **`is_active`**: Visibility flag.
+- **`metadata`**: Additional configuration (JSON).
+
+### OfferItem (`billable_offer_items`)
+Links products to offers with quantity and expiration rules.
+
+- **`offer`**: FK to Offer.
+- **`product`**: FK to Product.
+- **`quantity`**: How many units of the product.
+- **`period_value`** / **`period_unit`**: Expiration (DAYS, MONTHS, YEARS, FOREVER).
+
+### QuotaBatch (`billable_quota_batches`)
+User's "wallet" of resources. Each batch represents a grant of a specific product.
+
+- **`user_id`**: FK to User.
+- **`product`**: FK to Product.
+- **`source_offer`**: FK to Offer (nullable, for audit).
+- **`order_item`**: FK to OrderItem (nullable, if purchased).
+- **`initial_quantity`**: Original amount granted.
+- **`remaining_quantity`**: Current balance.
+- **`valid_from`** / **`expires_at`**: Validity period.
+- **`state`**: ACTIVE, EXHAUSTED, EXPIRED, REVOKED.
+- **`created_at`**: Timestamp for FIFO ordering.
+
+### Transaction (`billable_transactions`)
+Immutable ledger of all balance changes.
+
+- **`user_id`**: FK to User.
+- **`quota_batch`**: FK to QuotaBatch.
+- **`amount`**: Quantity changed.
+- **`direction`**: CREDIT (grant) or DEBIT (consume).
+- **`action_type`**: Source (e.g., "purchase", "trial_activation", "usage").
+- **`object_id`**: Optional external reference.
+- **`metadata`**: Context (JSON).
+- **`created_at`**: Timestamp.
 
 ### Order (`billable_orders`)
 Represents a financial transaction intent.
 
-- **`user`**: FK to `settings.AUTH_USER_MODEL`.
+- **`user_id`**: FK to User.
 - **`status`** *(Choice)*: `PENDING`, `PAID`, `CANCELLED`, `REFUNDED`.
 - **`total_amount`** / **`currency`**: Financial totals.
 - **`payment_method`**: String identifier (e.g., `stripe`, `telegram_payments`).
@@ -50,50 +96,31 @@ Represents a financial transaction intent.
 Individual lines within an order.
 
 - **`order`**: FK to Order.
-- **`product`**: FK to Product.
-- **`quantity`**: Number of units purchased.
-- **`price`**: Price per unit **at the moment of purchase**.
-- **`total_quantity`** / **`period_days`**: Snapshot of product properties at purchase time (to preserve history if product changes).
-
-### UserProduct (`billable_user_products`)
-The active "inventory" of rights owned by a user.
-
-- **`user`**: FK to User.
-- **`product`**: FK to Product.
-- **`is_active`**: Boolean flag.
-- **For Quantity Products**:
-    - `total_quantity`: Initial limit.
-    - `used_quantity`: Current usage.
-- **For Period Products**:
-    - `period_start`: Activation date.
-    - `expires_at`: Expiration date.
-- **Methods**:
-    - `can_use()`: Returns True if quota > used or not expired.
-    - `get_remaining()`: Returns integer balance.
+- **`offer`**: FK to Offer.
+- **`quantity`**: Number of offers purchased.
+- **`price`**: Price per offer **at the moment of purchase**.
 
 ### TrialHistory (`billable_trial_history`)
-Prevents trial abuse.
+Fraud prevention tool. **Does NOT enforce trial logic** — your application layer should check this before granting.
 
-- **`identity_hash`** *(CharField, indexed)*: SHA-256 hash of the user's external ID (device ID, phone, etc.).
-- **`identity_type`**: Type of ID hashed (typically matches `provider`, e.g., `telegram`, `max`, `n8n`, `email`).
-- **`trial_plan_name`**: The specific trial SKU used.
+- **`identity_hash`** *(CharField, indexed)*: SHA-256 hash of the user's external ID.
+- **`identity_type`**: Type of ID hashed (e.g., `telegram`, `email`).
+- **`trial_plan_name`**: The specific trial name used.
+- **Methods**:
+    - `ahas_used_trial(identities: dict)`: Async check if any identity has used a trial.
+    - `generate_identity_hash(value)`: Static method to hash identities.
 
 ### ExternalIdentity (`billable_external_identities`)
 External identity mapping for integrations.
 
-- **`provider`** *(CharField, indexed, default=`"default"`)*: Identity source/provider name (e.g., `telegram`, `max`, `n8n`). If not provided, `"default"` is used.
-- **`external_id`** *(CharField, indexed)*: Stable external identifier within the provider scope.
+- **`provider`** *(CharField, indexed, default=`"default"`)*: Identity source (e.g., `telegram`, `n8n`).
+- **`external_id`** *(CharField, indexed)*: Stable external identifier.
 - **`user`** *(FK, nullable)*: Optional link to `settings.AUTH_USER_MODEL`.
-- **`metadata`** *(JSONField)*: Provider-specific payload (username, display names, workspace, etc.).
+- **`metadata`** *(JSONField)*: Provider-specific payload.
 - **Uniqueness**: `(provider, external_id)`.
-
-### ProductUsage (`billable_product_usages`)
-Audit log of every consumption event.
-
-- **`user_product`**: Link to the source of rights.
-- **`action_type`**: String describing the action.
-- **`action_id`**: Idempotency key for the specific action.
-- **`metadata`**: Context (e.g., resulting artifact ID).
+- **Methods**:
+    - `get_user_by_identity(external_id, provider="default")`: Synchronously retrieves a User by their external identity.
+    - `aget_user_by_identity(external_id, provider="default")`: Asynchronously retrieves a User by their external identity.
 
 ---
 
@@ -107,20 +134,17 @@ The API is built with **Django Ninja**.
 
 #### `GET /balance`
 Get current quotas for the authenticated user.
-- **Response**: List of active features and remaining limits.
+- **Response**: List of active `product_key` and remaining limits.
 
 #### `GET /user-products`
-List **active products of a user**, optionally filtered by feature.
+List **active quota batches**, optionally filtered by `product_key`.
 
 - **Query params**:
   - `user_id` *(int, optional)*: Local user id.
-  - `feature` *(str, optional)*: Feature name to filter by. If omitted/empty, returns all active user products.
-  - `external_id` *(str, optional)*: External identifier (used if `user_id` is not provided).
-  - `provider` *(str, optional)*: Identity provider for `external_id`. Defaults to `"default"`.
-- **Notes**:
-  - User is resolved by `user_id`, or by `(provider, external_id)` mapping.
-  - **Product features are returned in** `product.metadata.features` (list of strings).
-- **Response (200)**: `List[UserProduct]`
+  - `product_key` *(str, optional)*: Resource key to filter by.
+  - `external_id` *(str, optional)*: External identifier.
+  - `provider` *(str, optional)*: Identity provider.
+- **Response (200)**: `List[ActiveBatch]`
 
 #### `POST /identify`
 Identify an external identity and ensure a local `User` exists (create and link if missing).
@@ -140,15 +164,70 @@ Identify an external identity and ensure a local `User` exists (create and link 
   - If `provider` is omitted, `"default"` is used.
   - User is always created or resolved; the response always includes `user_id`.
 
-#### `POST /grants`
-Grant a product directly (Admin/System usage).
+#### `POST /demo/trial-grant`
+(Demo/Reference implementation) Grant a trial offer with abuse protection.
 - **Body**:
   ```json
   {
-    "sku": "promo_pack_10",
+    "sku": "off_trial_pack",
     "user_id": 123
   }
   ```
+- **Notes**: 
+  - Uses `TrialHistory` to prevent double-granting. 
+  - This is a reference implementation; move logic to `PromotionService` in production.
+
+### 2. Commercial Flows
+
+#### `POST /exchange`
+Exchange internal currency for an offer (spend `product_key`, grant `sku`). 
+- **Entry point** for internal currency purchases.
+- **Logic**: Atomically consumes internal balance and grants the offer via `TransactionService.grant_offer(source="exchange")`.
+- **Body**: Send the JSON object **directly** as the request body (no top-level `"data"` wrapper). Content-Type: `application/json`.
+- **By user ID**:
+  ```json
+  {
+    "sku": "off_premium_pack",
+    "user_id": 123
+  }
+  ```
+- **By external identity** (e.g. Telegram): provide `external_id` and `provider` instead of `user_id`. User is resolved via `ExternalIdentity`.
+  ```json
+  {
+    "sku": "off_premium_pack",
+    "external_id": "322056265",
+    "provider": "telegram"
+  }
+  ```
+- **Notes**: `sku` is required. Either `user_id` or (`external_id` + `provider`) must be present. If `provider` is omitted when using external identity, `"default"` is used.
+
+### 3. Orders
+
+#### `POST /orders`
+Create a new order (financial intent).
+- **Body**:
+  ```json
+  {
+    "user_id": 123,
+    "items": [
+      {"sku": "off_diamonds_100", "quantity": 1}
+    ]
+  }
+  ```
+
+#### `POST /orders/{order_id}/confirm`
+Confirm payment for an order and grant products.
+- **Entry point** for real money purchases (RUB, USD, XTR).
+- **Logic**: Transitions order to `PAID` and calls `TransactionService.grant_offer(source="purchase")`.
+- **Body**:
+  ```json
+  {
+    "payment_id": "tx_abc_123",
+    "payment_method": "stripe"
+  }
+  ```
+
+### 4. Referrals & Stats
 
 #### `POST /referrals`
 Create a referral link between referrer and referee. Supports two input modes.
@@ -156,4 +235,11 @@ Create a referral link between referrer and referee. Supports two input modes.
 - **By user IDs** — body: `referrer_id`, `referee_id` *(int)*, optional `metadata`.  
 - **By external identity** — body: `provider`, `referrer_external_id`, `referee_external_id` *(str)*, optional `metadata`. Both identities are resolved via `ExternalIdentity` (user created and linked if missing). Same semantics as `/identify` for each side.
 
-Provide exactly one of the two modes. If `referrer` and `referee` resolve to the same user, returns 400.
+#### `GET /referrals/stats`
+Referral statistics (e.g. count of invited users) for the referrer.
+
+- **Query params**:
+  - `user_id` *(int, optional)*: Local user id.
+  - `external_id` *(str, optional)*: External identifier (used if `user_id` is not provided).
+  - `provider` *(str, optional)*: Identity provider for `external_id`. Defaults to `"default"`.
+- **Response (200)**: `{"success": true, "message": "Stats retrieved", "data": {"count": N}}`

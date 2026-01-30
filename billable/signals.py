@@ -13,13 +13,17 @@ from django.dispatch import Signal
 order_confirmed = Signal()
 
 # Sent after successful quota consumption
-# Arguments: usage (ProductUsage)
+# Arguments: usage (Transaction)
 quota_consumed = Signal()
 
 # Sent after trial period activation
 # Arguments: user_id (int), products (List[str])
 trial_activated = Signal()
 
-# Sent when a product is deactivated (expired or exhausted)
-# Arguments: user_product (UserProduct), reason (str)
-product_deactivated = Signal()
+# Sent after any transaction (grant or consume) is created
+# Arguments: transaction (Transaction)
+transaction_created = Signal()
+
+# Sent after a referral link is established
+# Arguments: referral (Referral)
+referral_attached = Signal()

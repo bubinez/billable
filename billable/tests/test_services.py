@@ -1,9 +1,11 @@
 import pytest
+import uuid
 from decimal import Decimal
+from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from billable.models import Product, UserProduct, Order, OrderItem, TrialHistory
-from billable.services import QuotaService, OrderService, UserProductService, ProductService
+from billable.models import Product, Offer, OfferItem, QuotaBatch, Transaction, Order, OrderItem, TrialHistory
+from billable.services import TransactionService, BalanceService, OrderService, ProductService
 
 User = get_user_model()
 
@@ -12,126 +14,213 @@ def test_user(db):
     return User.objects.create(username="testuser")
 
 @pytest.fixture
-def quantity_product(db):
+def qty_product(db):
     return Product.objects.create(
-        sku="TEST_QTY",
-        name="Test Quantity Product",
+        product_key="GEN_AI",
+        name="Generative AI Tokens",
         product_type=Product.ProductType.QUANTITY,
-        price=Decimal("100.00"),
-        quantity=5,
-        metadata={"features": ["test_feature"]}
     )
 
 @pytest.fixture
-def trial_product(db):
+def basic_offer(db, qty_product):
+    offer = Offer.objects.create(
+        sku="off_ai_tokens_100",
+        name="100 AI Tokens Pack",
+        price=Decimal("10.00"),
+        currency="USD",
+        is_active=True
+    )
+    OfferItem.objects.create(
+        offer=offer,
+        product=qty_product,
+        quantity=100
+    )
+    return offer
+
+@pytest.fixture
+def internal_currency_product(db):
     return Product.objects.create(
-        sku="TEST_TRIAL",
-        name="Test Trial Product",
-        product_type=Product.ProductType.PERIOD,
-        price=Decimal("0.00"),
-        period_days=7,
-        metadata={"features": ["trial_feature"], "is_trial": True}
+        product_key="internal",
+        name="Internal Credits",
+        product_type=Product.ProductType.QUANTITY,
+        is_currency=True,
     )
 
-@pytest.mark.django_db
-class TestQuotaService:
-    def test_consume_quota_success(self, test_user, quantity_product):
-        # Activate product for user
-        up = UserProduct.objects.create(
-            user=test_user,
-            product=quantity_product,
-            total_quantity=5,
-            used_quantity=0,
-            is_active=True
-        )
-        
-        result = QuotaService.consume_quota(
-            user_id=test_user.id,
-            feature="test_feature",
-            action_type="test_action"
-        )
-        
-        assert result["success"] is True
-        up.refresh_from_db()
-        assert up.used_quantity == 1
-        assert result["remaining"] == 4
+@pytest.fixture
+def exchange_offer(db, qty_product):
+    """An offer that can be bought with INTERNAL currency."""
+    offer = Offer.objects.create(
+        sku="off_exchange_tokens_50",
+        name="Exchange AI Tokens",
+        price=Decimal("50.00"),
+        currency="INTERNAL",
+        is_active=True
+    )
+    OfferItem.objects.create(
+        offer=offer,
+        product=qty_product,
+        quantity=50
+    )
+    return offer
 
-    def test_consume_quota_insufficient(self, test_user, quantity_product):
-        UserProduct.objects.create(
-            user=test_user,
-            product=quantity_product,
-            total_quantity=1,
-            used_quantity=1,
-            is_active=True
-        )
-        
-        result = QuotaService.consume_quota(
-            user_id=test_user.id,
-            feature="test_feature",
-            action_type="test_action"
-        )
-        
-        assert result["success"] is False
-        assert result["error"] == "quota_exhausted"
+@pytest.mark.django_db(transaction=True)
+class TestServicesSyncAsync:
+    """
+    Test class covering both Sync and Async methods of billable services.
+    Ensures core logic is identical and thread-safe across both paradigms.
+    """
 
-    def test_activate_trial_success(self, test_user, trial_product):
-        result = QuotaService.activate_trial(
-            user_id=test_user.id,
-            identities={"telegram": "123456789"},
-        )
-        
-        assert result["success"] is True
-        # Check if hash was generated
-        expected_hash = TrialHistory.generate_identity_hash("123456789")
-        assert TrialHistory.objects.filter(identity_type="telegram", identity_hash=expected_hash).exists()
-        assert UserProduct.objects.filter(user=test_user, product=trial_product).exists()
+    # --- TransactionService ---
 
-    def test_activate_trial_already_used(self, test_user, trial_product):
-        h = TrialHistory.generate_identity_hash("123456789")
-        TrialHistory.objects.create(identity_type="telegram", identity_hash=h, trial_plan_name="test")
+    def test_transaction_service_sync(self, test_user, basic_offer):
+        # 1. Grant
+        batches = TransactionService.grant_offer(test_user.id, basic_offer)
+        assert len(batches) == 1
+        assert TransactionService.get_balance(test_user.id, "GEN_AI") == 100
         
-        result = QuotaService.activate_trial(
-            user_id=test_user.id,
-            identities={"telegram": "123456789"},
-        )
-        
-        assert result["success"] is False
-        assert result["error"] == "trial_already_used"
+        # 2. Check Quota
+        check = TransactionService.check_quota(test_user.id, "GEN_AI")
+        assert check["can_use"] is True
+        assert check["remaining"] == 100
 
-@pytest.mark.django_db
-class TestOrderService:
-    def test_create_and_process_order(self, test_user, quantity_product):
-        # 1. Order creation
-        items = [{"product": quantity_product, "quantity": 1}]
-        order = OrderService.create_order(user_id=test_user.id, product_items=items)
+        # 3. Consume
+        res = TransactionService.consume_quota(test_user.id, "GEN_AI", amount=30)
+        assert res["success"] is True
+        assert res["remaining"] == 70
+
+    @pytest.mark.asyncio
+    async def test_transaction_service_async(self, test_user, basic_offer):
+        # 1. Grant (Sync only, typically called from Task or Payment Hook)
+        await TransactionService.agrant_offer(test_user.id, basic_offer)
         
-        assert order.total_amount == quantity_product.price
-        assert order.items.count() == 1
+        # 2. Check Quota (Async)
+        check = await TransactionService.acheck_quota(test_user.id, "GEN_AI")
+        assert check["can_use"] is True
+        assert check["remaining"] == 100
+
+        # 3. Consume (Async)
+        res = await TransactionService.aconsume_quota(test_user.id, "GEN_AI", amount=30)
+        assert res["success"] is True
+        assert res["remaining"] == 70
+
+    # --- ProductService ---
+
+    def test_product_service_sync(self, qty_product, basic_offer):
+        products = ProductService.get_active_products()
+        assert len(products) == 1
+        
+        p = ProductService.get_product_by_key("GEN_AI")
+        assert p is not None
+        assert p.product_key == "GEN_AI"
+
+    @pytest.mark.asyncio
+    async def test_product_service_async(self, qty_product, basic_offer):
+        products = await ProductService.aget_active_products()
+        assert len(products) == 1
+        
+        p = await ProductService.aget_product_by_key("GEN_AI")
+        assert p is not None
+        assert p.product_key == "GEN_AI"
+
+    # --- OrderService ---
+
+    def test_order_service_sync(self, test_user, basic_offer):
+        # 1. Create
+        items = [{"sku": basic_offer.sku, "quantity": 1}]
+        order = OrderService.create_order(test_user.id, items)
         assert order.status == Order.Status.PENDING
         
-        # 2. Order payment
-        success = OrderService.process_payment(order_id=order.id, payment_id="PAY-123")
-        
+        # 2. Payment
+        success = OrderService.process_payment(order.id, payment_id="PAY-SYNC")
         assert success is True
-        order.refresh_from_db()
-        assert order.status == Order.Status.PAID
-        assert order.payment_id == "PAY-123"
-        
-        # 3. Check UserProduct accrual
-        assert UserProduct.objects.filter(user=test_user, product=quantity_product).exists()
+        assert TransactionService.get_balance(test_user.id, "GEN_AI") == 100
 
-@pytest.mark.django_db
-class TestUserProductService:
-    def test_get_balance_summary(self, test_user, quantity_product):
-        UserProduct.objects.create(
-            user=test_user,
-            product=quantity_product,
-            total_quantity=10,
-            used_quantity=3,
-            is_active=True
+    @pytest.mark.asyncio
+    async def test_order_service_async(self, test_user, basic_offer):
+        # 1. Create
+        items = [{"sku": basic_offer.sku, "quantity": 1}]
+        order = await OrderService.acreate_order(test_user.id, items)
+        assert order.status == Order.Status.PENDING
+        
+        # 2. Payment
+        success = await OrderService.aprocess_payment(order.id, payment_id="PAY-ASYNC")
+        assert success is True
+        
+        balance = await TransactionService.aget_balance(test_user.id, "GEN_AI")
+        assert balance == 100
+        
+        # 3. Serialization
+        data = await OrderService.aserialize_order_to_dict(order)
+        assert data["id"] == order.id
+        assert len(data["items"]) == 1
+        assert data["items"][0]["sku"] == basic_offer.sku
+
+    def test_order_create_raises_on_unknown_sku(self, test_user):
+        """create_order raises ValueError when offer for sku is not found."""
+        items = [{"sku": "nonexistent_sku_xyz", "quantity": 1}]
+        with pytest.raises(ValueError, match=r"Offer not found for sku: 'nonexistent_sku_xyz'"):
+            OrderService.create_order(test_user.id, items)
+
+    @pytest.mark.asyncio
+    async def test_order_acreate_raises_on_unknown_sku(self, test_user):
+        """acreate_order raises ValueError when offer for sku is not found."""
+        items = [{"sku": "nonexistent_sku_xyz", "quantity": 1}]
+        with pytest.raises(ValueError, match=r"Offer not found for sku: 'nonexistent_sku_xyz'"):
+            await OrderService.acreate_order(test_user.id, items)
+
+    def test_order_create_raises_on_missing_sku(self, test_user):
+        """create_order raises ValueError when item has no 'sku'."""
+        items = [{"quantity": 1}]
+        with pytest.raises(ValueError, match=r"Item must have 'sku'"):
+            OrderService.create_order(test_user.id, items)
+
+    # --- BalanceService ---
+
+    def test_balance_service_sync(self, test_user, qty_product):
+        # Setup manual batch
+        QuotaBatch.objects.create(
+            user=test_user, product=qty_product, initial_quantity=50, remaining_quantity=40,
+            state=QuotaBatch.State.ACTIVE
         )
         
-        summary = UserProductService.get_balance_summary(test_user.id)
-        assert "test_feature" in summary
-        assert summary["test_feature"]["remaining"] == 7
-        assert summary["test_feature"]["total"] == 10
+        # 1. List products
+        items = BalanceService.get_user_active_products(test_user.id)
+        assert len(items) == 1
+        assert items[0].remaining_quantity == 40
+        
+        # 2. Summary (by product_key)
+        summary = BalanceService.get_balance_summary(test_user.id)
+        assert summary["GEN_AI"]["remaining"] == 40
+
+    @pytest.mark.asyncio
+    async def test_balance_service_async(self, test_user, qty_product):
+        # Setup manual batch
+        from asgiref.sync import sync_to_async
+        await sync_to_async(QuotaBatch.objects.create)(
+            user=test_user, product=qty_product, initial_quantity=50, remaining_quantity=40,
+            state=QuotaBatch.State.ACTIVE
+        )
+        
+        # 1. List products
+        items = await BalanceService.aget_user_active_products(test_user.id)
+        assert len(items) == 1
+        assert items[0].remaining_quantity == 40
+
+    # --- Cross-Paradigm Integrity ---
+
+    @pytest.mark.asyncio
+    async def test_sync_consumption_reflects_in_async_balance(self, test_user, qty_product):
+        """Standard scenario: Web (Async) checks balance after Backend Worker (Sync) granted it."""
+        # 1. Setup (Simulate worker)
+        from asgiref.sync import sync_to_async
+        await sync_to_async(QuotaBatch.objects.create)(
+            user=test_user, product=qty_product, initial_quantity=100, remaining_quantity=100,
+            state=QuotaBatch.State.ACTIVE
+        )
+        
+        # 2. Consume via sync (Simulate another process/worker)
+        await sync_to_async(TransactionService.consume_quota)(test_user.id, "GEN_AI", amount=10)
+
+        # 3. Check via async (Simulate web API)
+        res = await TransactionService.acheck_quota(test_user.id, "GEN_AI")
+        assert res["remaining"] == 90

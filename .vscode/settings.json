@@ -1,9 +1,8 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python",
+  "python.defaultInterpreterPath": ".venv/Scripts/python",
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.pytestArgs": [
-    "billable/tests/",
     "-v"
   ],
   "python.testing.autoTestDiscoverOnSaveEnabled": true,

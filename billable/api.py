@@ -1,12 +1,17 @@
-"""API endpoints for the billable module.
+"""REST API endpoints for the billable billing engine.
 
-Implemented using Django Ninja for integration with the main project API.
+Implemented with Django Ninja. All endpoints require Bearer token authentication
+(BILLABLE_API_TOKEN). The API exposes identity resolution, product catalog,
+quota/balance checks, wallet, orders, exchange (internal currency), referrals,
+and demo trial grant. Docstrings are used to generate OpenAPI descriptions.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import List
+from datetime import datetime
+from typing import List, Dict, Any
+from uuid import UUID
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
@@ -14,32 +19,57 @@ from ninja import Router
 from ninja.security import HttpBearer
 
 from .conf import billable_settings
-from .models import Order, Product, UserProduct, TrialHistory, Referral, ExternalIdentity
+from .models import (
+    Order, 
+    Product, 
+    TrialHistory, 
+    Referral, 
+    ExternalIdentity, 
+    Offer, 
+    QuotaBatch, 
+    Transaction
+)
 from .schemas import (
     BalanceFeatureSchema, 
     CommonResponse,
+    ExchangeSchema,
     IdentifySchemaIn,
     IdentifySchemaOut,
     OrderConfirmSchema, 
     OrderCreateSchema, 
     OrderSchema,
     ProductSchema, 
-    QuotaCheckSchema, 
     QuotaConsumeSchema,
     TrialGrantSchema,
-    UserProductSchema,
-    ReferralAssignSchema
+    ActiveBatchSchema,
+    ReferralAssignSchema,
+    OfferSchema,
+    QuotaBatchSchema,
+    TransactionSchema,
+    WalletBalanceSchema
 )
-from .services import OrderService, QuotaService, UserProductService, ProductService
+from .services import OrderService, TransactionService, BalanceService, ProductService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
 class APIKeyAuth(HttpBearer):
-    """Token authentication in the Authorization: Bearer <token> header."""
-    
+    """Bearer token authentication for the billing API.
+
+    Validates the Authorization: Bearer <token> header against BILLABLE_API_TOKEN.
+    """
+
     def authenticate(self, request, token):
+        """Validate token and return it if it matches the configured API token.
+
+        Args:
+            request: The HTTP request (unused).
+            token: The Bearer token from the Authorization header.
+
+        Returns:
+            The token string if valid; None otherwise.
+        """
         if token == billable_settings.API_TOKEN:
             return token
         return None
@@ -49,11 +79,18 @@ class APIKeyAuth(HttpBearer):
 router = Router(tags=["billing"], auth=APIKeyAuth())
 
 
-async def _resolve_external_to_user_id(provider: str, external_id: str) -> int:
-    """
-    Resolve (provider, external_id) to billable user_id.
+async def _aresolve_external_to_user_id(provider: str, external_id: str) -> int:
+    """Resolve (provider, external_id) to local billing user_id.
 
-    Creates ExternalIdentity and User if missing. Same semantics as /identify.
+    Creates ExternalIdentity and User if missing. Same semantics as POST /identify.
+    Used internally when an endpoint accepts external_id + provider instead of user_id.
+
+    Args:
+        provider: Identity provider (e.g. telegram, n8n). Used for ExternalIdentity lookup.
+        external_id: Stable external identifier (e.g. telegram user id).
+
+    Returns:
+        The primary key of the billing User (settings.AUTH_USER_MODEL).
     """
     identity, _ = await ExternalIdentity.objects.aupdate_or_create(
         provider=provider,
@@ -73,14 +110,14 @@ async def _resolve_external_to_user_id(provider: str, external_id: str) -> int:
 
 
 @router.post("/identify", response={200: IdentifySchemaOut, 400: CommonResponse})
-async def identify(request, data: IdentifySchemaIn):
-    """
-    Identify an external identity and ensure a local User exists.
+async def aidentify(request, data: IdentifySchemaIn):
+    """Identify an external identity and ensure a local billing user exists.
 
-    Contract:
-    - provider defaults to "default" when not provided.
-    - User is always created/linked; response always includes user_id.
-    - Trial eligibility is checked only by {provider: external_id}.
+    Creates or updates ExternalIdentity and links it to a User (creating the user
+    if missing). Call this at the start of a flow before other billing calls.
+    Returns user_id for use in subsequent requests, plus trial_eligible flag.
+
+    Request body: provider (optional, default 'default'), external_id (required), profile (optional).
     """
     provider_value = data.provider or "default"
     external_id_value = str(data.external_id).strip()
@@ -96,7 +133,6 @@ async def identify(request, data: IdentifySchemaIn):
     user_id = identity.user_id
 
     if not user_id:
-        # User model may be standard AbstractUser. Use username as unique key per (provider, external_id).
         username_value = f"billable_{provider_value}_{external_id_value}"
         user, created_user = await User.objects.aget_or_create(
             username=username_value,
@@ -111,7 +147,7 @@ async def identify(request, data: IdentifySchemaIn):
         await identity.asave(update_fields=["user_id", "metadata", "updated_at"])
         user_id = user.id
 
-    trial_eligible = not await TrialHistory.has_used_trial_async(identities={provider_value: external_id_value})
+    trial_eligible = not await TrialHistory.ahas_used_trial(identities={provider_value: external_id_value})
 
     return {
         "user_id": user_id,
@@ -128,15 +164,23 @@ async def identify(request, data: IdentifySchemaIn):
 # --- Product Endpoints ---
 
 @router.get("/products", response=List[ProductSchema])
-async def list_products(request):
-    """List of active products."""
-    return await ProductService.aget_active_products()
+async def alist_products(request):
+    """List all active products from the catalog.
+
+    Returns products with is_active=True. Used for admin or catalog display.
+    """
+    products = await ProductService.aget_active_products()
+    return products
 
 
-@router.get("/products/{sku}", response={200: ProductSchema, 404: CommonResponse})
-async def get_product(request, sku: str):
-    """Get product by SKU."""
-    product = await ProductService.aget_product_by_sku(sku)
+@router.get("/products/{product_key}", response={200: ProductSchema, 404: CommonResponse})
+async def aget_product(request, product_key: str):
+    """Get a single product by its product_key.
+
+    Path: product_key — unique identifier (e.g. diamonds, vip_access).
+    Returns 404 if the product does not exist or is inactive.
+    """
+    product = await ProductService.aget_product_by_key(product_key)
     if not product:
         return 404, {"success": False, "message": "Product not found"}
     return product
@@ -145,85 +189,72 @@ async def get_product(request, sku: str):
 # --- Quota and Balance Endpoints ---
 
 @router.get("/balance", response=BalanceFeatureSchema)
-async def check_user_balance(request, user_id: int | None = None, feature: str = "", external_id: str | None = None, provider: str | None = None):
-    """Check if a feature can be used."""
+async def acheck_user_balance(request, user_id: int | None = None, product_key: str = "", external_id: str | None = None, provider: str | None = None):
+    """Check whether the user has quota for a product_key (without consuming).
+
+    Query params: user_id (optional), product_key (optional), external_id (optional), provider (optional).
+    Provide either user_id or (external_id + provider). Returns can_use, remaining, and message.
+    """
     provider_value = provider or "default"
     resolved_user_id = user_id
 
     if resolved_user_id is None and external_id:
-        identity = await ExternalIdentity.objects.filter(provider=provider_value, external_id=external_id).values("user_id").afirst()
-        resolved_user_id = identity["user_id"] if identity else None
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
-        return {"can_use": False, "feature": feature, "remaining": 0, "message": "user_id is required (or provide external_id + provider mapped to a user)"}
+        return {"can_use": False, "product_key": product_key, "remaining": 0, "message": "user_id is required"}
 
-    if external_id:
-        await ExternalIdentity.objects.aupdate_or_create(
-            provider=provider_value,
-            external_id=external_id,
-            defaults={"user_id": resolved_user_id},
-        )
-
-    result = await QuotaService.acheck_quota(resolved_user_id, feature)
+    result = await TransactionService.acheck_quota(resolved_user_id, product_key)
     return result
 
 
-@router.get("/user-products", response={200: List[UserProductSchema], 400: CommonResponse})
-async def list_user_products(request, user_id: int | None = None, feature: str = "", external_id: str | None = None, provider: str | None = None):
-    """
-    List active user products (optionally filtered by feature).
+@router.get("/user-products", response={200: List[ActiveBatchSchema], 400: CommonResponse})
+async def alist_user_products(request, user_id: int | None = None, product_key: str = "", external_id: str | None = None, provider: str | None = None):
+    """List active quota batches for the user (user-products / inventory).
 
-    Notes:
-    - Resolve user either by explicit user_id or by (provider + external_id) mapping.
-    - Product features are returned via product.metadata.features in the response.
+    Query params: user_id (optional), product_key (optional filter), external_id (optional), provider (optional).
+    Provide either user_id or (external_id + provider). Returns list of ActiveBatchSchema.
     """
     provider_value = provider or "default"
     resolved_user_id = user_id
 
     if resolved_user_id is None and external_id:
-        identity = await ExternalIdentity.objects.filter(
-            provider=provider_value,
-            external_id=external_id,
-        ).values("user_id").afirst()
-        resolved_user_id = identity["user_id"] if identity else None
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
-        return 400, {"success": False, "message": "user_id is required (or provide external_id + provider mapped to a user)"}
+        return 400, {"success": False, "message": "user_id is required"}
 
-    if external_id:
-        await ExternalIdentity.objects.aupdate_or_create(
-            provider=provider_value,
-            external_id=external_id,
-            defaults={"user_id": resolved_user_id},
-        )
-
-    feature_value = feature or None
-    return await UserProductService.aget_user_active_products(user_id=resolved_user_id, feature=feature_value)
+    return await BalanceService.aget_user_active_products(user_id=resolved_user_id, product_key=product_key or None)
 
 
-@router.post("/quota/consume", response={200: CommonResponse, 400: CommonResponse})
-async def consume_user_quota(request, data: QuotaConsumeSchema):
-    """Consume quota."""
+@router.post("/wallet/consume", response={200: CommonResponse, 400: CommonResponse})
+async def aconsume_user_quota(request, data: QuotaConsumeSchema):
+    """Consume one unit of quota for a product_key (admin or server-to-server).
+
+    Request body: user_id or (external_id + provider), product_key, action_type, optional action_id,
+    idempotency_key, metadata. Uses FIFO consumption. Returns 400 if user not resolved or insufficient quota.
+    """
     provider_value = data.provider or "default"
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and data.external_id:
-        identity = await ExternalIdentity.objects.filter(provider=provider_value, external_id=data.external_id).values("user_id").afirst()
-        resolved_user_id = identity["user_id"] if identity else None
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=data.external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
-        return 400, {"success": False, "message": "user_id is required (or provide external_id + provider mapped to a user)", "data": {}}
+        return 400, {"success": False, "message": "user_id is required"}
 
-    if data.external_id:
-        await ExternalIdentity.objects.aupdate_or_create(
-            provider=provider_value,
-            external_id=data.external_id,
-            defaults={"user_id": resolved_user_id, "metadata": data.metadata or {}},
-        )
-
-    result = await QuotaService.aconsume_quota(
+    result = await TransactionService.aconsume_quota(
         user_id=resolved_user_id,
-        feature=data.feature,
+        product_key=data.product_key,
         action_type=data.action_type,
         action_id=data.action_id,
         idempotency_key=data.idempotency_key,
@@ -234,121 +265,251 @@ async def consume_user_quota(request, data: QuotaConsumeSchema):
     return {"success": True, "message": "Quota consumed", "data": result}
 
 
-@router.post("/grants", response={200: CommonResponse, 400: CommonResponse})
-async def grant_trial(request, data: TrialGrantSchema):
-    """Grant a trial period or a specific product by SKU."""
+@router.post("/demo/trial-grant", response={200: CommonResponse, 400: CommonResponse})
+async def ademo_grant_trial(request, data: TrialGrantSchema):
+    """(Demo) Grant a trial offer by SKU with abuse protection.
+
+    Reference implementation: uses TrialHistory to prevent double-granting, then
+    TransactionService.agrant_offer and marks trial as used. For production,
+    move this logic to a dedicated PromotionService in your application code.
+
+    Request body: user_id or (external_id + provider), sku (offer to grant). Returns 400 if trial already used or offer not found.
+    """
     provider_value = data.provider or "default"
     resolved_external_id = data.external_id
-    resolved_provider = provider_value
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and resolved_external_id:
-        identity = await ExternalIdentity.objects.filter(provider=resolved_provider, external_id=resolved_external_id).values("user_id").afirst()
-        resolved_user_id = identity["user_id"] if identity else None
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=resolved_external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
-        return 400, {"success": False, "message": "user_id is required (or provide external_id + provider mapped to a user)", "data": {}}
+        return 400, {"success": False, "message": "user_id is required"}
 
-    if resolved_external_id:
-        await ExternalIdentity.objects.aupdate_or_create(
-            provider=resolved_provider,
-            external_id=resolved_external_id,
-            defaults={"user_id": resolved_user_id, "metadata": {}},
-        )
+    # 1. Fraud Prevention: Check if trial was already used
+    identities = {provider_value: resolved_external_id} if resolved_external_id else None
+    if await TrialHistory.ahas_used_trial(identities=identities):
+        return 400, {
+            "success": False, 
+            "message": "Trial already used", 
+            "data": {"error": "trial_already_used"}
+        }
 
-    identities = {resolved_provider: resolved_external_id} if resolved_external_id else None
-    result = await QuotaService.aactivate_trial(
+    # 2. Find the trial offer (you should create an Offer with sku="trial" in your DB)
+    try:
+        offer = await Offer.objects.filter(sku=data.sku, is_active=True).afirst() if data.sku else None
+        if not offer:
+            return 400, {"success": False, "message": "Trial offer not found"}
+    except Exception as e:
+        logger.error(f"Error finding trial offer: {e}")
+        return 400, {"success": False, "message": "Trial offer not found"}
+
+    # 3. Grant the offer using TransactionService
+    batches = await TransactionService.agrant_offer(
         user_id=resolved_user_id,
-        identities=identities,
-        sku=data.sku
+        offer=offer,
+        source="trial_activation",
+        metadata={"identities": identities}
     )
-    if not result.get("success"):
-        return 400, {"success": False, "message": result.get("message"), "data": result}
-    return {"success": True, "message": "Trial granted", "data": result}
+
+    # 4. Mark trial as used in TrialHistory
+    if identities:
+        for id_type, id_value in identities.items():
+            if id_value:
+                await TrialHistory.objects.acreate(
+                    identity_type=id_type,
+                    identity_hash=TrialHistory.generate_identity_hash(id_value),
+                    trial_plan_name=offer.name
+                )
+
+    # 5. Send signal for notifications
+    from .signals import trial_activated
+    product_names = [batch.product.name async for batch in QuotaBatch.objects.filter(id__in=[b.id for b in batches]).select_related('product').aiterator()]
+    trial_activated.send(sender=TransactionService, user_id=resolved_user_id, products=product_names)
+
+    return {"success": True, "message": "Trial granted", "data": {"products": product_names}}
+
+
+
+# --- Catalog & Entitlement v2 Endpoints ---
+
+@router.get("/catalog", response=List[OfferSchema])
+async def alist_catalog(request):
+    """List all active offers (catalog) with nested offer items and products.
+
+    Returns offers with is_active=True, prefetched items and product details.
+    """
+    offers = []
+    async for offer in Offer.objects.filter(is_active=True).prefetch_related("items__product").aiterator():
+         offers.append(offer)
+    return offers
+
+
+@router.get("/wallet", response=WalletBalanceSchema)
+async def aget_wallet(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
+    """Get aggregated wallet balance: user_id and map of product_key -> total remaining quantity.
+
+    Query params: user_id (optional), external_id (optional), provider (optional).
+    Provide either user_id or (external_id + provider). Resolves user and sums remaining_quantity per product_key.
+    """
+    provider_value = provider or "default"
+    uid = user_id
+    if not uid and external_id:
+        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+    
+    if not uid:
+         return 400, {"success": False, "message": "User not identified"}
+
+    balances = {}
+    async for batch in QuotaBatch.objects.filter(
+        user_id=uid, 
+        state=QuotaBatch.State.ACTIVE
+    ).select_related('product').aiterator():
+        key = batch.product.product_key or f"prod_{batch.product.id}"
+        balances[key] = balances.get(key, 0) + batch.remaining_quantity
+
+    return {"user_id": uid, "balances": balances}
+
+
+@router.get("/wallet/batches", response=List[QuotaBatchSchema])
+async def aget_wallet_batches(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
+    """List detailed active quota batches for the user (wallet entries with state and expiry).
+
+    Query params: user_id (optional), external_id (optional), provider (optional).
+    Returns all ACTIVE batches; each batch has product, initial/remaining quantity, expires_at, state.
+    """
+    provider_value = provider or "default"
+    uid = user_id
+    if not uid and external_id:
+        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+    
+    if not uid:
+         return 400, {"success": False, "message": "User not identified"}
+
+    batches = []
+    async for batch in QuotaBatch.objects.filter(
+        user_id=uid, 
+        state=QuotaBatch.State.ACTIVE
+    ).select_related('product').aiterator():
+        batches.append(batch)
+    return batches
+
+
+@router.get("/wallet/transactions", response=List[TransactionSchema])
+async def aget_wallet_transactions(
+    request, 
+    user_id: int | None = None, 
+    external_id: str | None = None, 
+    provider: str | None = None,
+    product_key: str | None = None,
+    action_type: str | None = None,
+    date_from: datetime | None = None,
+):
+    """List transaction history (ledger) for the user with optional filters.
+
+    Query params: user_id (optional), external_id (optional), provider (optional),
+    product_key (optional), action_type (optional), date_from (optional).
+    Returns up to 100 transactions, newest first.
+    """
+    provider_value = provider or "default"
+    uid = user_id
+    if not uid and external_id:
+        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+    
+    if not uid:
+         return 400, {"success": False, "message": "User not identified"}
+
+    txs = []
+    qs = Transaction.objects.filter(user_id=uid)
+    if product_key:
+        qs = qs.filter(quota_batch__product__product_key=product_key)
+    if action_type:
+        qs = qs.filter(action_type=action_type)
+    if date_from:
+        qs = qs.filter(created_at__gte=date_from)
+        
+    qs = qs.order_by('-created_at')[:100]
+    async for tx in qs.aiterator():
+        txs.append(tx)
+    return txs
+
+
+@router.post("/exchange", response={200: CommonResponse, 400: CommonResponse, 404: CommonResponse})
+async def aexchange_offer(request, data: ExchangeSchema):
+    """Exchange internal currency for an offer (spend balance, grant SKU).
+
+    Atomically debits the internal-currency product (FIFO) and grants the target offer
+    via TransactionService. Request body: user_id or (external_id + provider), sku.
+    Returns 404 if offer not found; 400 if user not resolved or insufficient balance.
+    """
+    provider_value = data.provider or "default"
+    resolved_user_id = data.user_id
+
+    if resolved_user_id is None and data.external_id:
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=data.external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
+
+    if resolved_user_id is None:
+        return 400, {"success": False, "message": "user_id is required"}
+
+    try:
+        offer = await Offer.objects.aget(sku=data.sku)
+        result = await TransactionService.aexchange(user_id=resolved_user_id, offer=offer)
+        if not result.get("success", True):
+            return 400, {"success": False, "message": result.get("message", "Exchange failed")}
+    except Offer.DoesNotExist:
+        return 404, {"success": False, "message": "Offer not found"}
+    except Exception as e:
+        return 400, {"success": False, "message": str(e)}
+
+    return {"success": True, "message": "Exchange successful", "data": result}
 
 
 # --- Order Endpoints ---
 
 @router.post("/orders", response={200: OrderSchema, 400: CommonResponse})
-async def create_order(request, data: OrderCreateSchema):
-    """
-    Create a new order.
-    
-    Args:
-        request: HTTP request object.
-        data: Order creation data with user_id, products list, and optional metadata.
-        
-    Returns:
-        OrderSchema on success, CommonResponse with error on failure.
-    """
-    # Convert SKUs to Product objects
-    product_items = []
-    invalid_skus = []
-    for item in data.products:
-        sku = item.get("sku")
-        if not sku:
-            continue
-        product = await ProductService.aget_product_by_sku(sku)
-        if not product:
-            invalid_skus.append(sku)
-            logger.warning(f"Product with SKU '{sku}' not found during order creation")
-            continue
-        product_items.append({
-            "product": product,
-            "quantity": item.get("quantity", 1)
-        })
-    
-    if not product_items:
-        error_message = "No valid products found"
-        if invalid_skus:
-            error_message = f"Products not found: {', '.join(invalid_skus)}"
-        return 400, {"success": False, "message": error_message}
+async def acreate_order(request, data: OrderCreateSchema):
+    """Create a new order (financial intent before sending invoice to client).
 
+    Request body: user_id or (external_id + provider), items (list of {sku, quantity}), optional metadata.
+    Order is created in PENDING status; pass order_id to payment provider, then confirm via POST /orders/{id}/confirm.
+    """
     provider_value = data.provider or "default"
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and data.external_id:
-        identity = await ExternalIdentity.objects.filter(provider=provider_value, external_id=data.external_id).values("user_id").afirst()
-        resolved_user_id = identity["user_id"] if identity else None
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=data.external_id, provider=provider_value
+        )
+        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
-        return 400, {"success": False, "message": "user_id is required (or provide external_id + provider mapped to a user)"}
+        return 400, {"success": False, "message": "user_id is required"}
 
-    if data.external_id:
-        await ExternalIdentity.objects.aupdate_or_create(
-            provider=provider_value,
-            external_id=data.external_id,
-            defaults={"user_id": resolved_user_id, "metadata": data.metadata or {}},
+    try:
+        order = await OrderService.acreate_order(
+            user_id=resolved_user_id,
+            items=data.items,
+            metadata=data.metadata
         )
+    except ValueError as e:
+        return 400, {"success": False, "message": str(e)}
 
-    order = await OrderService.acreate_order(
-        user_id=resolved_user_id,
-        product_items=product_items,
-        metadata=data.metadata
-    )
-    # Prefetch items with product for serialization
-    order = await Order.objects.prefetch_related("items__product").select_related("user").aget(id=order.id)
-    # Serialize order to dict using service method
+    order = await Order.objects.prefetch_related("items__offer__items__product").select_related("user").aget(id=order.id)
     order_dict = await OrderService.aserialize_order_to_dict(order)
     return order_dict
 
 
 @router.post("/orders/{order_id}/confirm", response={200: CommonResponse, 400: CommonResponse, 404: CommonResponse})
-async def confirm_order_payment(request, order_id: int, data: OrderConfirmSchema):
-    """
-    Confirm order payment and activate associated products.
+async def aconfirm_order_payment(request, order_id: int, data: OrderConfirmSchema):
+    """Confirm payment for an order and grant products (called by payment webhook).
 
-    This endpoint is called after a successful payment notification.
-    It transitions the order to 'paid' status and creates UserProduct records.
-    Returns the full order data including items with SKUs.
-
-    Args:
-        request: HTTP request object.
-        order_id: Order ID to confirm payment for.
-        data: Payment confirmation data with payment_id and payment_method.
-        
-    Returns:
-        CommonResponse with order data on success, error response on failure.
+    Transitions order to PAID and calls TransactionService.grant_offer(source='purchase') for each item.
+    Request body: payment_id (for idempotency), payment_method. Returns 400 if processing fails; 404 if order not found.
     """
     success = await OrderService.aprocess_payment(
         order_id=order_id,
@@ -356,18 +517,17 @@ async def confirm_order_payment(request, order_id: int, data: OrderConfirmSchema
         payment_method=data.payment_method
     )
     if not success:
-        return 400, {"success": False, "message": "Failed to process payment", "data": {}}
+        return 400, {"success": False, "message": "Failed to process payment"}
     
     try:
         order = await Order.objects.prefetch_related(
-            "items__product"
+            "items__offer__items__product"
         ).select_related("user").aget(id=order_id)
     except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found during payment confirmation")
-        return 404, {"success": False, "message": "Order not found", "data": {}}
+        return 404, {"success": False, "message": "Order not found"}
     
-    # Serialize order to dict using service method
     order_dict = await OrderService.aserialize_order_to_dict(order)
+    from .schemas import OrderSchema
     order_data = OrderSchema.model_validate(order_dict).model_dump(mode="json")
     
     return {
@@ -378,41 +538,27 @@ async def confirm_order_payment(request, order_id: int, data: OrderConfirmSchema
 
 
 @router.get("/orders/{order_id}", response={200: OrderSchema, 404: CommonResponse})
-async def get_order(request, order_id: int):
-    """
-    Get order information by ID.
-    
-    Args:
-        request: HTTP request object.
-        order_id: Order ID to retrieve.
-        
-    Returns:
-        OrderSchema on success, CommonResponse with error on failure.
+async def aget_order(request, order_id: int):
+    """Get a single order by ID with line items and totals.
+
+    Path: order_id — order primary key. Returns 404 if order does not exist.
     """
     try:
-        order = await Order.objects.prefetch_related("items__product").select_related("user").aget(id=order_id)
-        # Serialize order to dict using service method
+        order = await Order.objects.prefetch_related("items__offer__items__product").select_related("user").aget(id=order_id)
         order_dict = await OrderService.aserialize_order_to_dict(order)
         return order_dict
     except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found")
         return 404, {"success": False, "message": "Order not found"}
 
 
+# --- Referral Endpoints ---
+
 @router.post("/referrals", response={200: CommonResponse, 400: CommonResponse})
-async def assign_referral(request, data: ReferralAssignSchema):
-    """
-    Establish a referral link between referrer and referee users.
+async def aassign_referral(request, data: ReferralAssignSchema):
+    """Create a referral link between referrer and referee.
 
-    Accepts either (referrer_id, referee_id) or (provider, referrer_external_id, referee_external_id).
-    In the external-id mode both identities are resolved via ExternalIdentity (user created if missing).
-
-    Args:
-        request: HTTP request object.
-        data: Referral assignment data.
-
-    Returns:
-        CommonResponse with success status and referral data.
+    Two modes: (referrer_id, referee_id) or (provider, referrer_external_id, referee_external_id).
+    External IDs are resolved via ExternalIdentity (user created if missing). Returns 400 if invalid or duplicate.
     """
     by_ids = data.referrer_id is not None and data.referee_id is not None
     by_external = (
@@ -421,24 +567,17 @@ async def assign_referral(request, data: ReferralAssignSchema):
         and data.referee_external_id is not None
     )
     if not by_ids and not by_external:
-        return 400, {
-            "success": False,
-            "message": "Provide either (referrer_id, referee_id) or (provider, referrer_external_id, referee_external_id)",
-        }
+        return 400, {"success": False, "message": "Provide valid identifiers"}
 
     if by_ids:
         referrer_user_id, referee_user_id = data.referrer_id, data.referee_id
     else:
         provider_value = data.provider or "default"
-        referrer_user_id = await _resolve_external_to_user_id(
-            provider_value, data.referrer_external_id
-        )
-        referee_user_id = await _resolve_external_to_user_id(
-            provider_value, data.referee_external_id
-        )
+        referrer_user_id = await _aresolve_external_to_user_id(provider_value, data.referrer_external_id)
+        referee_user_id = await _aresolve_external_to_user_id(provider_value, data.referee_external_id)
 
     if referrer_user_id == referee_user_id:
-        return 400, {"success": False, "message": "Referrer and referee cannot be the same user"}
+        return 400, {"success": False, "message": "Referrer and referee cannot be same"}
 
     try:
         referral, created = await Referral.objects.aget_or_create(
@@ -446,16 +585,38 @@ async def assign_referral(request, data: ReferralAssignSchema):
             referee_id=referee_user_id,
             defaults={"metadata": data.metadata or {}},
         )
+        if created:
+             from .signals import referral_attached
+             referral_attached.send(sender=None, referral=referral)
         return {"success": True, "message": "Referral assigned", "data": {"created": created}}
     except IntegrityError:
-        logger.error(
-            f"Integrity error assigning referral: referrer_id={referrer_user_id}, referee_id={referee_user_id}",
-            exc_info=True,
+        return 400, {"success": False, "message": "Relationship exists or invalid IDs"}
+
+
+@router.post("/referrals/attach", response=CommonResponse)
+async def aattach_referral(request, data: ReferralAssignSchema):
+    """Alias for POST /referrals: create referral link (same request body and behavior)."""
+    return await aassign_referral(request, data)
+
+
+@router.get("/referrals/stats", response={200: CommonResponse, 400: CommonResponse})
+async def areferral_stats(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
+    """Get referral statistics for the referrer (e.g. count of invited users).
+
+    Query params: user_id (optional), external_id (optional), provider (optional).
+    Provide either user_id or (external_id + provider). Response data contains count.
+    """
+    provider_value = provider or "default"
+    uid = user_id
+
+    if uid is None and external_id:
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
         )
-        return 400, {"success": False, "message": "Referral relationship already exists or invalid user IDs"}
-    except Exception:
-        logger.error(
-            f"Unexpected error assigning referral: referrer_id={referrer_user_id}, referee_id={referee_user_id}",
-            exc_info=True,
-        )
-        return 400, {"success": False, "message": "Failed to assign referral"}
+        uid = user.id if user else None
+
+    if uid is None:
+        return 400, {"success": False, "message": "user_id is required"}
+
+    count = await Referral.objects.filter(referrer_id=uid).acount()
+    return {"success": True, "message": "Stats retrieved", "data": {"count": count}}

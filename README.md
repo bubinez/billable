@@ -9,12 +9,13 @@ Designed to work seamlessly with orchestrators like **n8n**, but fully usable as
 ## Status
 ![Status](https://img.shields.io/badge/Status-Active-success)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Django](https://img.shields.io/badge/Django-4.2%2B-green)
+![Django](https://img.shields.io/badge/Django-5.0%2B-green)
 
 ## Features
-- **Abstract Rights Management**: Decouples "SKU" (what you sell) from "Features" (what the user gets).
-- **Flexible Quotas**: Supports Quantity-based, Period-based (subscriptions), and Unlimited product types.
-- **Trial & Abuse Protection**: Fingerprints abstract identities to prevent trial reuse.
+- **Transaction-Based Ledger**: All balance changes are recorded as immutable transactions (Credit/Debit).
+- **Offer System**: Flexible product bundles with configurable expiration periods.
+- **FIFO Consumption**: Automatic oldest-first quota consumption.
+- **Fraud Prevention**: Abstract identity hashing for trial abuse protection.
 - **Detachable Architecture**: No foreign keys to your business models (uses metadata).
 - **Idempotency**: Built-in protection against double-spending and duplicate payments.
 - **REST API**: Ready-to-use Django Ninja API for frontend or external orchestrators.
@@ -24,7 +25,7 @@ Designed to work seamlessly with orchestrators like **n8n**, but fully usable as
 ## Documentation
 
 - 📘 **[Architecture & Design](doc/architecture.md)**
-  Deep dive into Business Processes, Order Flow, and the "Selector-based" quota logic.
+  Deep dive into Business Processes, Order Flow, and the Transaction Engine.
   
 - 📙 **[API & Models Reference](doc/reference.md)**
   Database schema, Configuration variables, and REST API specification.
@@ -96,23 +97,22 @@ You can use the module directly in your views or Celery tasks without calling th
 
 **Checking Quota:**
 ```python
-from billable.services import QuotaService
+from billable.services import TransactionService
 
-def generate_pdf_report(user):
-    # Check if user has the feature "pdf_export" available
-    # This automatically checks subscriptions, one-time packs, and trials.
-    is_allowed, msg, product, balance = QuotaService.check_quota(user, "pdf_export")
+async def generate_pdf_report(user):
+    # Check if user has the technical resource "pdf_export" available
+    result = await TransactionService.acheck_quota(user.id, "pdf_export")
 
-    if not is_allowed:
-        raise PermissionError(f"Upgrade required: {msg}")
+    if not result["can_use"]:
+        raise PermissionError(f"Upgrade required: {result['message']}")
 
     # Your logic here...
     print("Generating PDF...")
 
     # Consume 1 unit of quota (Atomic & Idempotent)
-    QuotaService.consume_quota(
-        user=user, 
-        feature="pdf_export", 
+    await TransactionService.aconsume_quota(
+        user_id=user.id, 
+        product_key="pdf_export", 
         idempotency_key=f"report_{report_id}"
     )
 ```
@@ -121,14 +121,54 @@ def generate_pdf_report(user):
 ```python
 from billable.services import OrderService
 
-order = OrderService.create_order(
-    user=request.user,
+order = await OrderService.acreate_order(
+    user_id=request.user.id,
     items=[
-        {"sku": "premium_monthly", "quantity": 1}
+        {"sku": "off_premium_pack", "quantity": 1}
     ],
     metadata={"source": "web_checkout"}
 )
 ```
+
+**Implementing Trial/Bonus Logic:**
+
+`billable` provides **building blocks** for fraud prevention and transaction management, but does NOT include business rules for promotions. Here's how to implement trial logic in your application:
+
+```python
+from billable.models import Offer, TrialHistory
+from billable.services import TransactionService
+from asgiref.sync import sync_to_async
+
+async def claim_welcome_trial(user_id: int, telegram_id: str):
+    """Example: Grant welcome trial with fraud prevention."""
+    
+    # 1. Check eligibility using TrialHistory
+    identities = {"telegram": telegram_id}
+    if await TrialHistory.ahas_used_trial(identities=identities):
+        return {"success": False, "reason": "trial_already_used"}
+    
+    # 2. Find the trial offer (create an Offer with sku="off_welcome_trial" in your DB)
+    offer = await Offer.objects.aget(sku="off_welcome_trial")
+    
+    # 3. Grant the offer using TransactionService
+    batches = await sync_to_async(TransactionService.grant_offer)(
+        user_id=user_id,
+        offer=offer,
+        source="welcome_bonus",
+        metadata={"identities": identities}
+    )
+    
+    # 4. Mark trial as used
+    await TrialHistory.objects.acreate(
+        identity_type="telegram",
+        identity_hash=TrialHistory.generate_identity_hash(telegram_id),
+        trial_plan_name="Welcome Trial"
+    )
+    
+    return {"success": True, "batches": batches}
+```
+
+For complex promotion campaigns (multi-step bonuses, referral rewards, etc.), create a dedicated `PromotionService` in your application layer that orchestrates calls to `TransactionService`.
 
 ### REST API Usage
 If you are using **n8n** or a frontend:
@@ -136,16 +176,16 @@ If you are using **n8n** or a frontend:
 **Identify user by external identity (recommended first step):**
 `POST /api/v1/billing/identify`
 
-**Get Balance:**
-`GET /api/v1/billing/balance` (Headers: `Authorization: Bearer <TOKEN>`)
+**Purchase Flow (Real Money):**
+1.  **Create Order**: `POST /api/v1/billing/orders`
+2.  **Confirm Payment**: `POST /api/v1/billing/orders/{order_id}/confirm`
+    *Triggered by your payment webhook. This grants products via `TransactionService.grant_offer(source="purchase")`.*
 
-**Confirm Payment:**
-`POST /api/v1/billing/orders/{order_id}/confirm`
-```json
-{
-  "payment_id": "stripe_ch_123",
-  "status": "paid"
-}
-```
+**Exchange Flow (Internal Currency):**
+1.  **Exchange**: `POST /api/v1/billing/exchange`
+    *Atomically spends internal currency and grants the target offer.*
+
+**Get Balance:**
+`GET /api/v1/billing/wallet` (Headers: `Authorization: Bearer <TOKEN>`)
 
 *For full API details, see the [Reference Guide](doc/reference.md).*

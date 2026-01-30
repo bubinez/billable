@@ -7,6 +7,9 @@ detailed usage tracking (e.g., "30 of 100 applications"), and a flexible pricing
 from __future__ import annotations
 
 import hashlib
+import uuid
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
@@ -16,74 +19,42 @@ from .conf import billable_settings
 
 class Product(models.Model):
     """
-    Product model in the billing system.
-    
-    Supports different product types:
-    - period: products by period (e.g., resume boost for 30 days)
-    - quantity: products by quantity (e.g., 100 job applications)
-    - unlimited: unlimited products
+    Fundamental entity, technical resource or access right.
     """
 
     class ProductType(models.TextChoices):
-        """Product types."""
-
         PERIOD = "period", "By period"
         QUANTITY = "quantity", "By quantity"
         UNLIMITED = "unlimited", "Unlimited"
 
-    # Main product fields
-    name = models.CharField(max_length=100, verbose_name="Product Name")
-    sku = models.CharField(
+    product_key = models.CharField(
         max_length=50,
         unique=True,
         null=True,
         blank=True,
-        verbose_name="SKU",
-        help_text="Unique product SKU for n8n integration",
+        verbose_name="Product Key",
+        help_text="Unique product key (e.g., 'diamonds', 'vip_access')",
     )
-    description = models.TextField(verbose_name="Product Description")
+    name = models.CharField(max_length=100, verbose_name="Product Name")
+    description = models.TextField(blank=True, verbose_name="Product Description")
     product_type = models.CharField(
         max_length=20,
         choices=ProductType.choices,
         verbose_name="Product Type",
     )
-    price = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        verbose_name="Product Price",
-    )
-    currency = models.CharField(
-        max_length=3,
-        default="RUB",
-        verbose_name="Currency",
-    )
-
-    # Fields for different product types
-    # For products by period
-    period_days = models.IntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Validity period in days",
-    )
-
-    # For products by quantity
-    quantity = models.IntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Number of units",
-    )
-
-    # Activity management fields
     is_active = models.BooleanField(
         default=True,
         verbose_name="Active",
+    )
+    is_currency = models.BooleanField(
+        default=False,
+        verbose_name="Is Currency",
+        help_text="If True, this product can be used as a currency in the exchange engine.",
     )
     created_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name="Creation Date",
     )
-
-    # Additional product parameters
     metadata = models.JSONField(
         default=dict,
         blank=True,
@@ -100,81 +71,125 @@ class Product(models.Model):
             models.Index(fields=["product_type"], name="billable_prod_type_idx"),
         ]
 
+    def clean(self) -> None:
+        """
+        Validate shared namespace: product_key must not exist as an Offer SKU.
+        """
+        if self.product_key:
+            if Offer.objects.filter(sku=self.product_key).exists():
+                raise ValidationError(
+                    {"product_key": f"Conflict: '{self.product_key}' is already used as an Offer SKU."}
+                )
+        super().clean()
+
     def __str__(self) -> str:
-        """Return human-readable representation."""
         return f"{self.name} ({self.get_product_type_display()})"
 
+
+class Offer(models.Model):
+    """
+    Marketing packaging for products.
+    """
+
+    sku = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="SKU",
+        help_text="Commercial deal identifier. Used for grants and purchases.",
+    )
+    name = models.CharField(max_length=255, verbose_name="Offer Name")
+    price = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        verbose_name="Price",
+    )
+    currency = models.CharField(
+        max_length=10,
+        verbose_name="Currency",
+        help_text="EUR, USD, XTR, INTERNAL",
+    )
+    image = models.ImageField(
+        upload_to="billable/offers/",
+        null=True,
+        blank=True,
+        verbose_name="Image",
+    )
+    description = models.TextField(blank=True, verbose_name="Description")
+    is_active = models.BooleanField(default=True, verbose_name="Is Active")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
+    metadata = models.JSONField(default=dict, blank=True, verbose_name="Metadata")
+
+    class Meta:
+        db_table = "billable_offers"
+        verbose_name = "Offer"
+        verbose_name_plural = "Offers"
+        ordering = ["-created_at"]
+
     def clean(self) -> None:
-        """Product fields validation."""
-        if self.product_type == Product.ProductType.PERIOD and not self.period_days:
-            raise ValidationError("For period-based products, you must specify the period in days")
+        """
+        Validate shared namespace: SKU must not exist as a Product Key.
+        """
+        if self.sku:
+            if Product.objects.filter(product_key=self.sku).exists():
+                raise ValidationError(
+                    {"sku": f"Conflict: '{self.sku}' is already used as a Product Key."}
+                )
+        super().clean()
 
-        if self.product_type == Product.ProductType.QUANTITY and not self.quantity:
-            raise ValidationError("For quantity-based products, you must specify the number of units")
+    def __str__(self) -> str:
+        return f"{self.name} ({self.price} {self.currency})"
 
-        # Validation of metadata.features
-        if self.metadata:
-            features = self.metadata.get("features")
-            if features is not None:
-                if not isinstance(features, list):
-                    raise ValidationError("metadata.features must be a list")
-                if not all(isinstance(f, str) for f in features):
-                    raise ValidationError("All elements of metadata.features must be strings")
 
-    def get_display_name(self) -> str:
-        """
-        Returns the display name of the product.
-        
-        Returns:
-            str: Display name with parameters.
-        """
-        if self.product_type == Product.ProductType.PERIOD:
-            return f"{self.name} ({self.period_days} days)"
-        elif self.product_type == Product.ProductType.QUANTITY:
-            return f"{self.name} ({self.quantity} units)"
-        else:
-            return self.name
+class OfferItem(models.Model):
+    """
+    Connects Offer with Products.
+    """
 
-    def get_price_display(self) -> str:
-        """
-        Returns the display price of the product.
-        
-        Returns:
-            str: Price with currency.
-        """
-        return f"{self.price} {self.currency}"
+    class PeriodUnit(models.TextChoices):
+        HOURS = "hours", "Hours"
+        DAYS = "days", "Days"
+        MONTHS = "months", "Months"
+        YEARS = "years", "Years"
+        FOREVER = "forever", "Forever"
 
-    def is_trial(self) -> bool:
-        """
-        Checks if the product is a trial.
-        
-        Returns:
-            bool: True if the product is a trial.
-        """
-        return "trial" in self.name.lower() or "starter" in self.name.lower()
+    offer = models.ForeignKey(
+        Offer,
+        on_delete=models.CASCADE,
+        related_name="items",
+        verbose_name="Offer",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="offer_items",
+        verbose_name="Product",
+    )
+    quantity = models.PositiveIntegerField(
+        default=1,
+        verbose_name="Quantity",
+        help_text="Units to grant",
+    )
 
-    def has_feature(self, feature_name: str) -> bool:
-        """
-        Checks if the product has a specific feature.
-        
-        Args:
-            feature_name: Feature name to check
-            
-        Returns:
-            bool: True if the feature exists in metadata.features
-        """
-        features = self.metadata.get("features", [])
-        return feature_name in features
+    # Timing fields
+    period_unit = models.CharField(
+        max_length=10,
+        choices=PeriodUnit.choices,
+        default=PeriodUnit.FOREVER,
+        verbose_name="Period Unit",
+    )
+    period_value = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Period Value",
+    )
 
-    def is_resume_lift_service(self) -> bool:
-        """
-        Checks if the service is a resume boost.
-        
-        Returns:
-            bool: True if the product includes the resume_lift feature
-        """
-        return self.has_feature("resume_lift")
+    class Meta:
+        db_table = "billable_offer_items"
+        verbose_name = "Offer Item"
+        verbose_name_plural = "Offer Items"
 
+    def __str__(self) -> str:
+        return f"{self.offer.name} -> {self.product.name} x{self.quantity}"
 
 class Order(models.Model):
     """
@@ -281,42 +296,33 @@ class Order(models.Model):
         """
         return self.status == Order.Status.PENDING
 
-    def get_user_products(self):
-        """
-        Gets user products associated with the order.
-        
-        Returns:
-            QuerySet[UserProduct]: User products associated with the order.
-        """
-        return UserProduct.objects.filter(order_item__order=self).select_related("user", "product", "order_item")
-
     def get_order_items(self):
         """
-        Gets order items with products.
+        Gets order items with offers.
         
         Returns:
-            QuerySet[OrderItem]: Order items with loaded products.
+            QuerySet[OrderItem]: Order items with loaded offers.
         """
-        return self.items.select_related("product").all()
+        return self.items.select_related("offer").all()
 
-    def get_products(self) -> list[Product]:
+    def get_offers(self) -> list[Offer]:
         """
-        Gets all products in the order.
+        Gets all offers in the order.
         
         Returns:
-            list[Product]: List of all products in the order.
+            list[Offer]: List of all offers in the order.
         """
-        return [item.product for item in self.items.all()]
+        return [item.offer for item in self.items.all() if item.offer]
 
-    def get_first_product(self) -> Product | None:
+    def get_first_offer(self) -> Offer | None:
         """
-        Gets the first product in the order (for single product orders).
+        Gets the first offer in the order.
         
         Returns:
-            Product|None: First product or None if the order is empty.
+            Offer|None: First offer or None if the order is empty.
         """
-        order_item = self.items.select_related("product").first()
-        return order_item.product if order_item else None
+        order_item = self.items.select_related("offer").first()
+        return order_item.offer if order_item else None
 
 
 class OrderItem(models.Model):
@@ -324,17 +330,19 @@ class OrderItem(models.Model):
     Position in the order.
     """
 
-    # Relationship with order and product
+    # Relationship with order and offer
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,
         related_name="items",
         verbose_name="Order",
     )
-    product = models.ForeignKey(
-        Product,
+    offer = models.ForeignKey(
+        Offer,
         on_delete=models.CASCADE,
-        verbose_name="Product",
+        null=True,
+        blank=True,
+        verbose_name="Offer",
     )
 
     # Quantity and price fields
@@ -348,20 +356,6 @@ class OrderItem(models.Model):
         verbose_name="Price per unit",
     )
 
-    # Fields for quantity-based products
-    total_quantity = models.IntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Total Quantity",
-    )
-
-    # Fields for period-based products
-    period_days = models.IntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Period in days",
-    )
-
     class Meta:
         db_table = "billable_order_items"
         verbose_name = "Order Item"
@@ -372,250 +366,141 @@ class OrderItem(models.Model):
 
     def __str__(self) -> str:
         """Return human-readable representation."""
-        return f"{self.product.name} x{self.quantity} - {self.price} {self.order.currency}"
+        return f"{self.offer.name} x{self.quantity} - {self.price} {self.order.currency}"
 
-    def get_user_products(self):
+    def get_quota_batches(self):
         """
-        Gets user products associated with an order item.
-        
-        Returns:
-            QuerySet[UserProduct]: User products associated with the position.
+        Gets quota batches associated with an order item.
         """
-        return UserProduct.objects.filter(order_item=self).select_related("user", "product")
+        return QuotaBatch.objects.filter(order_item=self).select_related("user", "product")
 
 
-class UserProduct(models.Model):
+class QuotaBatch(models.Model):
     """
-    Active user product.
-    
-    Stores information about products purchased by the user
-    and their current usage status.
+    What is actually on the balance after purchase/grant.
     """
 
+    class State(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        EXHAUSTED = "EXHAUSTED", "Exhausted"
+        EXPIRED = "EXPIRED", "Expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
     user = models.ForeignKey(
         billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
+        related_name="quota_batches",
         verbose_name="User",
     )
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
+        related_name="quota_batches",
         verbose_name="Product",
     )
-    # Relationship with order item
+    source_offer = models.ForeignKey(
+        Offer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Source Offer",
+    )
     order_item = models.ForeignKey(
         OrderItem,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         verbose_name="Order Item",
     )
 
-    # General fields for all product types
-    purchased_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name="Purchase Date",
-    )
-    expires_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name="Expiration Date",
-    )
-    is_active = models.BooleanField(
-        default=True,
-        verbose_name="Active",
-    )
+    initial_quantity = models.IntegerField(verbose_name="Initial Quantity")
+    remaining_quantity = models.IntegerField(verbose_name="Remaining Quantity")
 
-    # Fields for quantity-based products
-    total_quantity = models.IntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Total Quantity",
-    )
-    used_quantity = models.IntegerField(
-        default=0,
-        verbose_name="Used quantity",
-    )
+    valid_from = models.DateTimeField(default=timezone.now, verbose_name="Valid From")
+    expires_at = models.DateTimeField(null=True, blank=True, verbose_name="Expires At")
 
-    # Fields for period-based products
-    period_start = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name="Period Start",
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.ACTIVE,
+        verbose_name="State",
     )
-    period_end = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name="Period End",
-    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
 
     class Meta:
-        db_table = "billable_user_products"
-        verbose_name = "User Product"
-        verbose_name_plural = "User Products"
-        unique_together = ["user", "product", "order_item"]
-        ordering = ["-purchased_at"]
+        db_table = "billable_quota_batches"
+        verbose_name = "Quota Batch"
+        verbose_name_plural = "Quota Batches"
+        ordering = ["created_at"]
         indexes = [
-            models.Index(fields=["user", "product", "is_active"], name="billable_up_prod_active_idx"),
-            models.Index(fields=["user", "is_active"], name="billable_up_user_active_idx"),
-            models.Index(fields=["is_active"], name="billable_up_is_active_idx"),
+            models.Index(fields=["user", "product", "state"], name="billable_qb_user_prod_state"),
+            models.Index(fields=["expires_at"], name="billable_qb_expires_at_idx"),
         ]
 
     def __str__(self) -> str:
-        """Return human-readable representation."""
-        u = self.user_id if self.user_id else "?"
-        p = self.product.name if self.product_id else "?"
-        return f"{u} - {p}"
-
-    def clean(self) -> None:
-        """User product fields validation."""
-        if self.product.product_type == Product.ProductType.QUANTITY and not self.total_quantity:
-            raise ValidationError("For quantity-based products, you must specify the total quantity")
-
-    def is_expired(self) -> bool:
-        """
-        Checks if the product has expired.
-        
-        Returns:
-            bool: True if the product has expired.
-        """
-        if self.product.product_type == Product.ProductType.PERIOD:
-            return self._is_done_and_deactivate_if_needed()
-        return False
-
-    def _is_done_and_deactivate_if_needed(self) -> bool:
-        """
-        Checks whether the user product is "done" (expired or exhausted) and lazily deactivates it.
-
-        "Done" conditions:
-        - PERIOD: expires_at exists and is in the past.
-        - QUANTITY: used_quantity >= total_quantity.
-
-        Returns:
-            bool: True if the product is done (expired/exhausted), False otherwise.
-        """
-        if self.product.product_type == Product.ProductType.PERIOD:
-            is_done = bool(self.expires_at and timezone.now() > self.expires_at)
-        elif self.product.product_type == Product.ProductType.QUANTITY:
-            is_done = self.used_quantity >= self.total_quantity
-        else:
-            return False
-
-        # Lazy deactivation on access, to sync flag with actual status
-        if is_done and self.is_active:
-            try:
-                self.is_active = False
-                self.save(update_fields=["is_active"])
-            except Exception:
-                # Do not escalate errors in model
-                pass
-
-        return is_done
-
-    def can_use(self) -> bool:
-        """
-        Checks if the product can be used.
-        
-        Returns:
-            bool: True if the product can be used.
-        """
-        if not self.is_active:
-            return False
-
-        if self.product.product_type == Product.ProductType.QUANTITY:
-            return not self._is_done_and_deactivate_if_needed()
-        elif self.product.product_type == Product.ProductType.PERIOD:
-            return not self._is_done_and_deactivate_if_needed()
-        else:  # unlimited
-            return True
-
-    def get_remaining_quantity(self) -> int | None:
-        """
-        Returns the remaining quantity for quantity-based products.
-        
-        Returns:
-            int|None: Remaining quantity or None for other product types.
-        """
-        if self.product.product_type == Product.ProductType.QUANTITY:
-            return max(0, self.total_quantity - self.used_quantity)
-        return None
-
-    def get_days_left(self) -> int | None:
-        """
-        Returns the number of days until expiration for period-based products.
-        
-        Returns:
-            int|None: Number of days until expiration or None for other product types.
-        """
-        if self.product.product_type == Product.ProductType.PERIOD and self.expires_at:
-            delta = self.expires_at - timezone.now()
-            return max(0, delta.days)
-        return None
+        return f"{self.user_id} - {self.product.name} ({self.remaining_quantity}/{self.initial_quantity})"
 
 
-class ProductUsage(models.Model):
+class Transaction(models.Model):
     """
-    Record of a product usage by the user.
-    
-    Stores detailed information about each usage of a product
-    for analytics and history tracking.
+    Every balance change is fixed by an immutable transaction.
     """
 
-    # User and user product relationships
+    class Direction(models.TextChoices):
+        CREDIT = "CREDIT", "Credit"
+        DEBIT = "DEBIT", "Debit"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
     user = models.ForeignKey(
         billable_settings.USER_MODEL,
         on_delete=models.CASCADE,
+        related_name="billable_transactions",
         verbose_name="User",
     )
-    user_product = models.ForeignKey(
-        UserProduct,
+    quota_batch = models.ForeignKey(
+        QuotaBatch,
         on_delete=models.CASCADE,
-        verbose_name="User Product",
+        related_name="transactions",
+        verbose_name="Quota Batch",
     )
 
-    # Action type and identifier fields
+    amount = models.IntegerField(verbose_name="Amount")
+    direction = models.CharField(
+        max_length=10,
+        choices=Direction.choices,
+        verbose_name="Direction",
+    )
     action_type = models.CharField(
         max_length=50,
         verbose_name="Action Type",
+        help_text="purchase, referral_bonus, usage, refund",
     )
-    action_id = models.CharField(
-        max_length=100,
+
+    # Generic FK for related objects
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
-        verbose_name="Action ID",
     )
+    object_id = models.CharField(max_length=255, null=True, blank=True)
+    related_object = GenericForeignKey("content_type", "object_id")
 
-    # Usage date field
-    used_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name="Usage Date",
-    )
-
-    # Metadata field
-    # Application IDs (report_id, vacancy_response_id, etc.) are stored here
-    metadata = models.JSONField(
-        default=dict,
-        blank=True,
-        verbose_name="Additional Data",
-        help_text="Stores application IDs (report_id, vacancy_response_id) and other data",
-    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
+    metadata = models.JSONField(default=dict, blank=True, verbose_name="Metadata")
 
     class Meta:
-        db_table = "billable_product_usages"
-        verbose_name = "Product Usage"
-        verbose_name_plural = "Product Usages"
-        ordering = ["-used_at"]
+        db_table = "billable_transactions"
+        verbose_name = "Transaction"
+        verbose_name_plural = "Transactions"
+        ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["user", "used_at"], name="billable_pu_user_used_at_idx"),
-            models.Index(fields=["user_product", "used_at"], name="billable_pu_prod_used_at_idx"),
-            models.Index(fields=["used_at"], name="billable_pu_used_at_idx"),
-            models.Index(fields=["action_type"], name="billable_pu_action_type_idx"),
+            models.Index(fields=["user", "created_at"], name="billable_tx_user_created_idx"),
+            models.Index(fields=["action_type"], name="billable_tx_action_type_idx"),
         ]
 
     def __str__(self) -> str:
-        """Return human-readable representation."""
-        return f"user_id={self.user_id} - {self.user_product.product.name} - {self.action_type}"
-
+        return f"{self.direction} {self.amount} - {self.action_type} ({self.user_id})"
 
 class TrialHistory(models.Model):
     """
@@ -721,7 +606,7 @@ class TrialHistory(models.Model):
         return cls.objects.filter(lookups).exists()
 
     @classmethod
-    async def has_used_trial_async(cls, identities: dict[str, str | int | None] | None = None, **kwargs) -> bool:
+    async def ahas_used_trial(cls, identities: dict[str, str | int | None] | None = None, **kwargs) -> bool:
         """
         Asynchronously checks if the user has used a trial before.
 
@@ -822,6 +707,54 @@ class ExternalIdentity(models.Model):
         """Return human-readable representation."""
         return f"{self.provider}:{self.external_id}"
 
+    @classmethod
+    def get_user_by_identity(
+        cls, external_id: str | int, provider: str = "default"
+    ) -> billable_settings.USER_MODEL | None:
+        """
+        Retrieves a user by their external identity.
+
+        Args:
+            external_id: The unique identifier from the external provider.
+            provider: The name of the identity provider (e.g., 'telegram', 'n8n').
+
+        Returns:
+            The User instance if found and linked, otherwise None.
+
+        Example:
+            user = ExternalIdentity.get_user_by_identity("12345", provider="telegram")
+        """
+        identity = (
+            cls.objects.filter(external_id=str(external_id), provider=provider)
+            .select_related("user")
+            .first()
+        )
+        return identity.user if identity else None
+
+    @classmethod
+    async def aget_user_by_identity(
+        cls, external_id: str | int, provider: str = "default"
+    ) -> billable_settings.USER_MODEL | None:
+        """
+        Asynchronously retrieves a user by their external identity.
+
+        Args:
+            external_id: The unique identifier from the external provider.
+            provider: The name of the identity provider (e.g., 'telegram', 'n8n').
+
+        Returns:
+            The User instance if found and linked, otherwise None.
+
+        Example:
+            user = await ExternalIdentity.aget_user_by_identity("12345", provider="telegram")
+        """
+        identity = (
+            await cls.objects.filter(external_id=str(external_id), provider=provider)
+            .select_related("user")
+            .afirst()
+        )
+        return identity.user if identity else None
+
 
 class Referral(models.Model):
     """
@@ -896,3 +829,6 @@ class Referral(models.Model):
             self.bonus_granted = True
             self.bonus_granted_at = timezone.now()
             self.save(update_fields=["bonus_granted", "bonus_granted_at"])
+
+
+from .models_proxy import Customer
