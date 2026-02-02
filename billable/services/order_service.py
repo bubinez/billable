@@ -177,6 +177,41 @@ class OrderService:
             return True
 
     @classmethod
+    async def acancel_order(cls, order_id: int, reason: str | None = None) -> bool:
+        """Async version of cancel_order."""
+        return await sync_to_async(cls.cancel_order, thread_sensitive=True)(order_id, reason)
+
+    @classmethod
+    def refund_order(cls, order_id: int, reason: str | None = None) -> bool:
+        """
+        Refunds a paid order.
+        Changes status to REFUNDED and revokes associated quotas.
+        """
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(id=order_id)
+            if order.status != Order.Status.PAID:
+                logger.warning(f"refund_order: Order #{order_id} is not PAID (status: {order.status})")
+                return False
+            
+            # 1. Revoke quotas
+            TransactionService.revoke_order_items(order, reason="refund")
+            
+            # 2. Update order status
+            order.status = Order.Status.REFUNDED
+            if reason:
+                if not order.metadata: order.metadata = {}
+                order.metadata["refund_reason"] = reason
+            order.save()
+            
+            logger.info(f"refund_order: Order #{order_id} refunded successfully")
+            return True
+
+    @classmethod
+    async def arefund_order(cls, order_id: int, reason: str | None = None) -> bool:
+        """Async version of refund_order."""
+        return await sync_to_async(cls.refund_order, thread_sensitive=True)(order_id, reason)
+
+    @classmethod
     async def aserialize_order_to_dict(cls, order: Order) -> Dict[str, Any]:
         """Native async serialization using aiterator."""
         items_list = []

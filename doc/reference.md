@@ -52,6 +52,14 @@ The catalog of available resources.
     - `UNLIMITED`: Permanent access.
 - **`is_active`**: Boolean flag. If False, cannot be used in new offers.
 - **`created_at`**: Timestamp.
+
+### Referral (`billable_referrals`)
+Tracks links between inviters and invitees.
+
+- **`referrer`**: FK to User (the inviter).
+- **`referee`**: FK to User (the invitee).
+- **`bonus_granted`**: Boolean flag.
+- **`created_at`**: Timestamp.
 - **`metadata`** *(JSONField)*: Stores configuration.
     - Key `features`: List of feature strings.
 
@@ -247,6 +255,16 @@ Confirm payment for an order and grant products.
   }
   ```
 
+#### `POST /orders/{order_id}/refund`
+Refund a paid order and revoke associated products.
+- **Logic**: Transitions order to `REFUNDED` and creates `DEBIT` transactions for any remaining quantity in the batches granted by this order. Batches are marked as `REVOKED`.
+- **Body**:
+  ```json
+  {
+    "reason": "Customer request"
+  }
+  ```
+
 ### 4. Referrals & Stats
 
 #### `POST /referrals`
@@ -263,3 +281,105 @@ Referral statistics (e.g. count of invited users) for the referrer.
   - `external_id` *(str, optional)*: External identifier (used if `user_id` is not provided).
   - `provider` *(str, optional)*: Identity provider for `external_id`. Defaults to `"default"`.
 - **Response (200)**: `{"success": true, "message": "Stats retrieved", "data": {"count": N}}`
+
+#### `POST /customers/merge`
+Merge two customers: move all data from `source_user` to `target_user`.
+
+- **Body**:
+  ```json
+  {
+    "target_user_id": 1,
+    "source_user_id": 2
+  }
+  ```
+- **Response (200)**: `CustomerMergeResponse` (success flag, message, and counts of moved items).
+- **Notes**: Atomically moves orders, batches, transactions, identities, and referrals.
+
+### 5. Catalog
+
+#### `GET /catalog`
+List all active offers (catalog) with nested offer items and products.
+
+- **Logic**: Returns offers with `is_active=True`, prefetched `items` and products.
+- **Response fields**: `sku`, `name`, `price`, `currency`, `description`, `image`, `is_active`, `items`, `metadata`.
+- **Query params** *(optional)*:
+  - `sku` *(str, repeatable)*: Filter by SKU list. Example: `?sku=off_a&sku=off_b`. Preserves input order; returns only found offers. If omitted, returns full catalog.
+- **Response (200)**: `List[OfferSchema]`
+
+#### `GET /catalog/{sku}`
+Get a single active offer by SKU.
+
+- **Path**: `sku` — unique offer identifier (e.g. `off_credits_100`).
+- **Logic**: Exact match on `sku` and `is_active=True`. Prefetches `items__product`.
+- **Response fields**: `sku`, `name`, `price`, `currency`, `description`, `image`, `is_active`, `items`, `metadata`.
+- **Response (200)**: `OfferSchema`
+- **Response (404)**: `CommonResponse` — `{"success": false, "message": "Offer not found"}` if offer does not exist or is inactive.
+
+**Контракт ответа (OfferSchema):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `sku` | string | Коммерческий идентификатор (например `off_diamonds_100`, `pack_premium`). |
+| `name` | string | Отображаемое название оффера. |
+| `price` | number (Decimal) | Цена за единицу. |
+| `currency` | string | Код валюты: EUR, USD, XTR, INTERNAL и т.д. |
+| `description` | string | Описание для UI. |
+| `image` | string \| null | URL изображения или null. |
+| `is_active` | boolean | Видимость в каталоге. |
+| `items` | array | Список позиций оффера (продукты и количества). |
+| `metadata` | object | Доп. конфигурация (JSON). |
+
+**Структура элемента `items` (OfferItemSchema):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `product` | object | Продукт в позиции (см. ниже). |
+| `quantity` | integer | Количество единиц продукта в оффере. |
+| `period_unit` | string | Единица срока: DAYS, MONTHS, YEARS, FOREVER. |
+| `period_value` | integer \| null | Число для срока; null для FOREVER. |
+
+**Вложенный объект `product` (ProductSchema):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | integer | PK продукта. |
+| `product_key` | string \| null | Идентификатор для учёта (например `diamonds`, `vip_access`). |
+| `name` | string | Отображаемое название продукта. |
+| `description` | string | Текстовое описание. |
+| `product_type` | string | PERIOD, QUANTITY, UNLIMITED. |
+| `is_active` | boolean | Доступность в новых офферах. |
+| `metadata` | object | JSON-конфигурация. |
+| `created_at` | string (datetime) | Время создания. |
+
+**Пример ответа (фрагмент):**
+```json
+[
+  {
+    "sku": "pack_premium",
+    "name": "Premium Bundle",
+    "price": "9.99",
+    "currency": "USD",
+    "description": "Monthly premium access",
+    "image": null,
+    "is_active": true,
+    "items": [
+      {
+        "product": {
+          "id": 1,
+          "product_key": "vip_access",
+          "name": "VIP Access",
+          "description": "",
+          "product_type": "PERIOD",
+          "is_active": true,
+          "metadata": {},
+          "created_at": "2025-01-01T00:00:00"
+        },
+        "quantity": 1,
+        "period_unit": "MONTHS",
+        "period_value": 1
+      }
+    ],
+    "metadata": {}
+  }
+]
+```

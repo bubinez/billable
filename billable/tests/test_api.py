@@ -109,6 +109,67 @@ class TestBillableAPI:
         offer = next(o for o in data_c if o["name"] == "Starter Bundle")
         assert len(offer["items"]) == 2
         assert float(offer["price"]) == 20.0
+
+    # --- Catalog by SKU (single & bulk) ---
+
+    async def test_get_catalog_offer_by_sku_200(self, api_client, bundle_offer):
+        """GET /catalog/{sku}: existing active offer returns 200 with items and product."""
+        res = await api_client.get(f"/catalog/{bundle_offer.sku}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["sku"] == bundle_offer.sku
+        assert data["name"] == bundle_offer.name
+        assert len(data["items"]) == 2
+        assert "product" in data["items"][0]
+
+    async def test_get_catalog_offer_by_sku_404_not_found(self, api_client):
+        """GET /catalog/{sku}: non-existent SKU returns 404 with CommonResponse."""
+        res = await api_client.get("/catalog/nonexistent_sku_xyz")
+        assert res.status_code == 404
+        data = res.json()
+        assert data["success"] is False
+        assert data["message"] == "Offer not found"
+
+    async def test_get_catalog_offer_by_sku_404_inactive(self, api_client, credit_offer):
+        """GET /catalog/{sku}: existing but is_active=False returns 404."""
+        credit_offer.is_active = False
+        await sync_to_async(credit_offer.save)()
+        res = await api_client.get(f"/catalog/{credit_offer.sku}")
+        assert res.status_code == 404
+        assert res.json()["success"] is False
+        assert res.json()["message"] == "Offer not found"
+
+    async def test_catalog_bulk_order_preserved(self, api_client, bundle_offer, credit_offer):
+        """GET /catalog?sku=B&sku=A returns [B, A] (order preserved)."""
+        sku_b, sku_a = bundle_offer.sku, credit_offer.sku
+        res = await api_client.get(f"/catalog?sku={sku_b}&sku={sku_a}")
+        assert res.status_code == 200
+        data = res.json()
+        assert [o["sku"] for o in data] == [sku_b, sku_a]
+
+    async def test_catalog_bulk_partial_match(self, api_client, bundle_offer, credit_offer):
+        """GET /catalog?sku=A&sku=missing&sku=B returns [A, B] (missing excluded)."""
+        sku_a, sku_b = bundle_offer.sku, credit_offer.sku
+        res = await api_client.get(f"/catalog?sku={sku_a}&sku=off_missing&sku={sku_b}")
+        assert res.status_code == 200
+        data = res.json()
+        assert [o["sku"] for o in data] == [sku_a, sku_b]
+
+    async def test_catalog_bulk_all_missing(self, api_client):
+        """GET /catalog?sku=x&sku=y with all missing returns 200 and []."""
+        res = await api_client.get("/catalog?sku=off_x&sku=off_y")
+        assert res.status_code == 200
+        assert res.json() == []
+
+    async def test_catalog_bulk_filter_inactive(self, api_client, bundle_offer, credit_offer):
+        """GET /catalog?sku=A&sku=B with A inactive returns only [B]."""
+        credit_offer.is_active = False
+        await sync_to_async(credit_offer.save)()
+        sku_a, sku_b = credit_offer.sku, bundle_offer.sku
+        res = await api_client.get(f"/catalog?sku={sku_a}&sku={sku_b}")
+        assert res.status_code == 200
+        data = res.json()
+        assert [o["sku"] for o in data] == [sku_b]
     async def test_get_product_by_key(self, api_client, tokens_product):
         response = await api_client.get(f"/products/{tokens_product.product_key}")
         assert response.status_code == 200

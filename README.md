@@ -18,6 +18,7 @@ The module provides a single API and accounting layer for different orchestrator
 - **Fraud Prevention**: Abstract identity hashing for trial abuse protection.
 - **Detachable Architecture**: No foreign keys to your business models (uses metadata).
 - **Idempotency**: Built-in protection against double-spending and duplicate payments.
+- **Customer Merging**: Service and API for consolidating user accounts without data loss.
 - **REST API**: Ready-to-use Django Ninja API for frontend or external orchestrators.
 
 ---
@@ -200,5 +201,9 @@ If you are using **n8n** or a frontend:
 
 **Get Balance:**
 `GET /api/v1/billing/wallet` (Headers: `Authorization: Bearer <TOKEN>`)
+
+**Catalog:**
+- `GET /api/v1/billing/catalog` — list all active offers (or filter by `?sku=...&sku=...` for bulk lookup)
+- `GET /api/v1/billing/catalog/{sku}` — get a single offer by SKU
 
 *For full API details, see the [Reference Guide](doc/reference.md).*

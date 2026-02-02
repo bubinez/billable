@@ -217,6 +217,13 @@ class OrderConfirmSchema(BaseModel):
     status: str = Field("paid", description="Status to set; typically 'paid'.")
 
 
+class OrderRefundSchema(BaseModel):
+    """Request body for refunding a paid order.
+    """
+
+    reason: str | None = Field(None, description="Optional reason for the refund.")
+
+
 class QuotaConsumeSchema(BaseModel):
     """Request body for consuming quota (admin or server-to-server).
 
@@ -339,3 +346,25 @@ class CommonResponse(BaseModel):
     success: bool = Field(..., description="True if the operation succeeded.")
     message: str = Field(..., description="Human-readable status or error message.")
     data: dict[str, Any] | None = Field(None, description="Optional result payload (e.g. order, batches).")
+
+
+class CustomerMergeSchema(BaseModel):
+    """Request body for merging two customers.
+    
+    Data from source_user will be moved to target_user.
+    """
+
+    target_user_id: int = Field(..., description="ID of the user who will remain.")
+    source_user_id: int = Field(..., description="ID of the user whose data will be moved.")
+
+
+class CustomerMergeResponse(BaseSchema):
+    """Response from customer merge operation."""
+
+    success: bool = Field(..., description="True if the merge was successful.")
+    message: str = Field(..., description="Human-readable status or error message.")
+    moved_orders: int = Field(0, description="Number of orders moved.")
+    moved_batches: int = Field(0, description="Number of quota batches moved.")
+    moved_transactions: int = Field(0, description="Number of transactions moved.")
+    moved_identities: int = Field(0, description="Number of external identities moved.")
+    moved_referrals: int = Field(0, description="Number of referral links moved.")

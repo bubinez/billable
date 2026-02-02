@@ -256,7 +256,7 @@ class Migration(migrations.Migration):
                 ('remaining_quantity', models.IntegerField(verbose_name='Remaining Quantity')),
                 ('valid_from', models.DateTimeField(default=django.utils.timezone.now, verbose_name='Valid From')),
                 ('expires_at', models.DateTimeField(blank=True, null=True, verbose_name='Expires At')),
-                ('state', models.CharField(choices=[('ACTIVE', 'Active'), ('EXHAUSTED', 'Exhausted'), ('EXPIRED', 'Expired')], default='ACTIVE', max_length=20, verbose_name='State')),
+                ('state', models.CharField(choices=[('ACTIVE', 'Active'), ('EXHAUSTED', 'Exhausted'), ('EXPIRED', 'Expired'), ('REVOKED', 'Revoked')], default='ACTIVE', max_length=20, verbose_name='State')),
                 ('created_at', models.DateTimeField(auto_now_add=True, verbose_name='Created At')),
             ],
             options={

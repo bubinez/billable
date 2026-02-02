@@ -27,3 +27,7 @@ transaction_created = Signal()
 # Sent after a referral link is established
 # Arguments: referral (Referral)
 referral_attached = Signal()
+
+# Sent after successful customer merge
+# Arguments: target_user_id (int), source_user_id (int)
+customers_merged = Signal()

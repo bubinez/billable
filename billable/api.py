@@ -37,6 +37,7 @@ from .schemas import (
     IdentifySchemaOut,
     OrderConfirmSchema, 
     OrderCreateSchema, 
+    OrderRefundSchema,
     OrderSchema,
     ProductSchema, 
     QuotaConsumeSchema,
@@ -46,9 +47,11 @@ from .schemas import (
     OfferSchema,
     QuotaBatchSchema,
     TransactionSchema,
-    WalletBalanceSchema
+    WalletBalanceSchema,
+    CustomerMergeSchema,
+    CustomerMergeResponse
 )
-from .services import OrderService, TransactionService, BalanceService, ProductService
+from .services import OrderService, TransactionService, BalanceService, ProductService, CustomerService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -335,16 +338,48 @@ async def ademo_grant_trial(request, data: TrialGrantSchema):
 
 # --- Catalog & Entitlement v2 Endpoints ---
 
+@router.get("/catalog/{sku}", response={200: OfferSchema, 404: CommonResponse})
+async def aget_catalog_offer(request, sku: str):
+    """Get a single active offer by SKU.
+
+    Path: sku — unique offer identifier (e.g. off_credits_100).
+    Returns 404 if offer does not exist or is inactive.
+    Response fields: sku, name, price, currency, description, image, is_active, items, metadata.
+    """
+    offer = await (
+        Offer.objects.filter(sku=sku, is_active=True)
+        .prefetch_related("items__product")
+        .afirst()
+    )
+    if not offer:
+        return 404, {"success": False, "message": "Offer not found"}
+    return offer
+
+
 @router.get("/catalog", response=List[OfferSchema])
 async def alist_catalog(request):
     """List all active offers (catalog) with nested offer items and products.
 
     Returns offers with is_active=True, prefetched items and product details.
+    Each offer includes: sku, name, price, currency, description, image, is_active, items, metadata.
+    Optional query param: sku (repeatable) — filter by SKU list; preserves order.
+    If sku not provided, returns full catalog.
     """
-    offers = []
-    async for offer in Offer.objects.filter(is_active=True).prefetch_related("items__product").aiterator():
-         offers.append(offer)
-    return offers
+    sku_list = request.GET.getlist("sku")
+    if not sku_list:
+        offers = []
+        async for offer in Offer.objects.filter(is_active=True).prefetch_related("items__product").aiterator():
+            offers.append(offer)
+        return offers
+
+    qs = (
+        Offer.objects.filter(sku__in=sku_list, is_active=True)
+        .prefetch_related("items__product")
+    )
+    by_sku: dict[str, Offer] = {}
+    async for offer in qs.aiterator():
+        by_sku[offer.sku] = offer
+    return [by_sku[s] for s in sku_list if s in by_sku]
 
 
 @router.get("/wallet", response=WalletBalanceSchema)
@@ -537,6 +572,38 @@ async def aconfirm_order_payment(request, order_id: int, data: OrderConfirmSchem
     }
 
 
+@router.post("/orders/{order_id}/refund", response={200: CommonResponse, 400: CommonResponse, 404: CommonResponse})
+async def arefund_order(request, order_id: int, data: OrderRefundSchema):
+    """Refund a paid order and revoke associated products.
+
+    Changes order status to REFUNDED and creates DEBIT transactions for any 
+    remaining quantity in the batches granted by this order.
+    """
+    success = await OrderService.arefund_order(
+        order_id=order_id,
+        reason=data.reason
+    )
+    if not success:
+        return 400, {"success": False, "message": "Failed to process refund. Order might not be in PAID status."}
+    
+    try:
+        order = await Order.objects.prefetch_related(
+            "items__offer__items__product"
+        ).select_related("user").aget(id=order_id)
+    except Order.DoesNotExist:
+        return 404, {"success": False, "message": "Order not found"}
+    
+    order_dict = await OrderService.aserialize_order_to_dict(order)
+    from .schemas import OrderSchema
+    order_data = OrderSchema.model_validate(order_dict).model_dump(mode="json")
+    
+    return {
+        "success": True, 
+        "message": "Order refunded and products revoked", 
+        "data": order_data
+    }
+
+
 @router.get("/orders/{order_id}", response={200: OrderSchema, 404: CommonResponse})
 async def aget_order(request, order_id: int):
     """Get a single order by ID with line items and totals.
@@ -593,12 +660,6 @@ async def aassign_referral(request, data: ReferralAssignSchema):
         return 400, {"success": False, "message": "Relationship exists or invalid IDs"}
 
 
-@router.post("/referrals/attach", response=CommonResponse)
-async def aattach_referral(request, data: ReferralAssignSchema):
-    """Alias for POST /referrals: create referral link (same request body and behavior)."""
-    return await aassign_referral(request, data)
-
-
 @router.get("/referrals/stats", response={200: CommonResponse, 400: CommonResponse})
 async def areferral_stats(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
     """Get referral statistics for the referrer (e.g. count of invited users).
@@ -620,3 +681,29 @@ async def areferral_stats(request, user_id: int | None = None, external_id: str 
 
     count = await Referral.objects.filter(referrer_id=uid).acount()
     return {"success": True, "message": "Stats retrieved", "data": {"count": count}}
+
+
+# --- Customer Management Endpoints ---
+
+@router.post("/customers/merge", response={200: CustomerMergeResponse, 400: CommonResponse})
+async def amerge_customers(request, data: CustomerMergeSchema):
+    """Merge two customers: move all data from source_user to target_user.
+
+    Moves orders, quota batches, transactions, identities, and referrals.
+    Atomically performs the merge and sends customers_merged signal.
+    """
+    try:
+        stats = await CustomerService.amerge_customers(
+            target_user_id=data.target_user_id,
+            source_user_id=data.source_user_id
+        )
+        return {
+            "success": True,
+            "message": f"Successfully merged customer {data.source_user_id} into {data.target_user_id}",
+            **stats
+        }
+    except ValueError as e:
+        return 400, {"success": False, "message": str(e)}
+    except Exception as e:
+        logger.error(f"Error merging customers {data.source_user_id} -> {data.target_user_id}: {e}", exc_info=True)
+        return 400, {"success": False, "message": "Internal error during customer merge"}

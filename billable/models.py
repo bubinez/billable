@@ -384,6 +384,7 @@ class QuotaBatch(models.Model):
         ACTIVE = "ACTIVE", "Active"
         EXHAUSTED = "EXHAUSTED", "Exhausted"
         EXPIRED = "EXPIRED", "Expired"
+        REVOKED = "REVOKED", "Revoked"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid7, editable=False)
     user = models.ForeignKey(

@@ -371,3 +371,51 @@ class TransactionService:
         """
         now = timezone.now()
         return QuotaBatch.objects.filter(state=QuotaBatch.State.ACTIVE, expires_at__lt=now).update(state=QuotaBatch.State.EXPIRED)
+
+    @classmethod
+    @transaction.atomic
+    def revoke_order_items(cls, order: Order, reason: str = "refund") -> int:
+        """
+        Revokes all active quota batches associated with the order.
+        Creates DEBIT transactions for the remaining quantity.
+        
+        Args:
+            order: The Order to revoke.
+            reason: The action_type for the transactions.
+            
+        Returns:
+            int: Number of batches revoked.
+        """
+        batches = QuotaBatch.objects.filter(
+            order_item__order=order,
+            state=QuotaBatch.State.ACTIVE
+        ).select_for_update()
+
+        revoked_count = 0
+        for batch in batches:
+            amount_to_revoke = batch.remaining_quantity
+            if amount_to_revoke > 0:
+                # Create DEBIT transaction for the remaining amount
+                tx = Transaction.objects.create(
+                    user_id=batch.user_id,
+                    quota_batch=batch,
+                    amount=amount_to_revoke,
+                    direction=Transaction.Direction.DEBIT,
+                    action_type=reason,
+                    related_object=order,
+                    metadata={"reason": "order_refunded"}
+                )
+                transaction_created.send(sender=cls, transaction=tx)
+            
+            # Mark batch as REVOKED and zero out remaining quantity
+            batch.remaining_quantity = 0
+            batch.state = QuotaBatch.State.REVOKED
+            batch.save(update_fields=["remaining_quantity", "state"])
+            revoked_count += 1
+            
+        return revoked_count
+
+    @classmethod
+    async def arevoke_order_items(cls, order: Order, reason: str = "refund") -> int:
+        """Async version of revoke_order_items."""
+        return await sync_to_async(cls.revoke_order_items, thread_sensitive=True)(order, reason)

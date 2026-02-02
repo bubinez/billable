@@ -30,6 +30,7 @@ The flow separates order creation from invoice generation to ensure data integri
 **Recommended flow (create order → invoice payload → webhook → confirm):**
 
 1.  **Initiation**: An `Order` is created via the API or service layer **before** sending an invoice to the client.
+    *   **Catalog Lookup**: Clients fetch offers via `GET /catalog` (full list or bulk by `sku` query param) or `GET /catalog/{sku}` (single offer by SKU). SKU is unique; matching is exact (case-sensitive).
     *   Data: List of offers (`sku`), quantity, price.
     *   Metadata: Application IDs (e.g., `report_id`) are stored in JSON `metadata`.
     *   Status: `PENDING`.
@@ -39,6 +40,13 @@ The flow separates order creation from invoice generation to ensure data integri
 5.  **Confirmation**: The system confirms the order via `POST /orders/{order_id}/confirm`.
     *   **Atomicity**: The system transitions the order to `PAID`, sets timestamps, and creates `QuotaBatch` records via `TransactionService.grant_offer()`.
     *   **Idempotency**: Reprocessing the same `payment_id` does not create duplicate batches or transactions; repeated confirm calls with the same `payment_id` are safe.
+6.  **Customer Merging**:
+    *   **Process**: Moves all financial data (orders, batches, transactions, identities, referrals) from a `source_user` to a `target_user`.
+    *   **Conflict Resolution**: If both users have identities for the same provider, the system ensures they match or raises a conflict error.
+    *   **Referrals**: Automatically handles referral links to avoid self-referral after merging.
+7.  **Refund/Cancellation**:
+    *   **Cancellation**: Possible for `PENDING` orders.
+    *   **Refund**: For `PAID` orders. The system transitions the order to `REFUNDED`, finds all associated `QuotaBatch` records, creates `DEBIT` transactions for any remaining quantity, and marks batches as `REVOKED`. This ensures a clean audit trail in the ledger.
 
 ### 3. Purchase Flows: Real Money vs. Internal Currency
 
@@ -141,6 +149,7 @@ The module exposes Python services for internal usage (Workers/Celery). For use 
 *   **TransactionService**: The core entitlement engine. Handles granting (`grant_offer`), consumption (`consume_quota`), balance checks (`check_quota`), exchange (`exchange`), and expiration (`expire_batches`).
 *   **BalanceService**: Queries the user's inventory. Capable of filtering active batches by `product_key` and calculating aggregate balances.
 *   **OrderService**: Handles the financial lifecycle. Creates multi-item orders, processes payments, and manages refunds/cancellations.
+*   **CustomerService**: Manages customer-centric operations. Implements `merge_customers` (and async `amerge_customers`) to consolidate user accounts while preserving ledger integrity.
 *   **ProductService**: Catalog management. Retrieves products by `product_key` or feature tags.
 
 ---
