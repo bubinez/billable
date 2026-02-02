@@ -6,7 +6,7 @@ This document describes the business logic, process flows, and architectural pri
 
 The module is designed as an isolated **Billing Engine** responsible for rights management and payments accounting. It abstracts the complexity of monetization from the main application logic.
 
-It adheres to the **"Detachable"** principle: the module does not contain the business logic of a specific product (e.g., generating a report) but delegates orchestration to external systems (e.g., n8n, Airflow) or client applications.
+It adheres to the **"Detachable"** principle: the module does not contain the business logic of a specific product (e.g., generating a report) but delegates orchestration to external systems (e.g., n8n, Airflow) or client applications. The module provides a **single API and accounting layer** for different orchestrators (n8n, bots, web), so each can use the same billing flows and data.
 
 **Terminology**: In this module, *user* denotes the **Billing account** — the entity to which orders, quotas, and product rights are attributed.
 
@@ -27,15 +27,18 @@ It adheres to the **"Detachable"** principle: the module does not contain the bu
 ### 2. Order Life Cycle (Order Flow)
 The flow separates order creation from invoice generation to ensure data integrity.
 
+**Recommended flow (create order → invoice payload → webhook → confirm):**
+
 1.  **Initiation**: An `Order` is created via the API or service layer **before** sending an invoice to the client.
     *   Data: List of offers (`sku`), quantity, price.
     *   Metadata: Application IDs (e.g., `report_id`) are stored in JSON `metadata`.
     *   Status: `PENDING`.
 2.  **Invoice Creation**: The `order_id` is passed to the external payment provider (in the invoice payload). This links the future payment to the database record.
-3.  **Payment**: Processing happens externally (e.g., Stripe, Telegram Payments via n8n).
-4.  **Confirmation**: Upon successful payment, the provider creates a callback/webhook. The system confirms the order via `POST /orders/{order_id}/confirm`.
+3.  **Payment**: Processing happens externally (e.g., Stripe, YooKassa, Telegram Payments).
+4.  **Webhook**: The payment provider sends a callback/webhook to **your application** (not to billable). Your application parses the webhook, extracts `order_id` and `payment_id`, and calls `POST /orders/{order_id}/confirm` with those values. Billable does not expose a built-in webhook endpoint; the app is responsible for receiving Stripe/YooKassa/Telegram webhooks and delegating confirmation to the billing API.
+5.  **Confirmation**: The system confirms the order via `POST /orders/{order_id}/confirm`.
     *   **Atomicity**: The system transitions the order to `PAID`, sets timestamps, and creates `QuotaBatch` records via `TransactionService.grant_offer()`.
-    *   **Idempotency**: Reprocessing the same `payment_id` does not create duplicate batches.
+    *   **Idempotency**: Reprocessing the same `payment_id` does not create duplicate batches or transactions; repeated confirm calls with the same `payment_id` are safe.
 
 ### 3. Purchase Flows: Real Money vs. Internal Currency
 
@@ -80,9 +83,7 @@ The module uses a **Transaction-based Ledger** approach where all balance change
     *   `action_type`: Source of the transaction (e.g., "purchase", "trial_activation", "usage").
     *   `quota_batch`: Link to the affected batch.
 *   **FIFO Consumption**: When consuming quota, the system automatically uses the oldest active batch first (ordered by `created_at ASC`).
-*   **Feature Resolution**: When checking quota for a `product_key`:
-    1.  Tries to match as a `Product.product_key`.
-    2.  Falls back to matching as a feature in `Product.metadata.features`.
+*   **Product Key Resolution**: When checking quota for a `product_key`, the system matches by `Product.product_key` only.
 
 ### 6. Referral Program
 *   **Chains**: Stores `referrer -> referee` links in the `Referral` model.
@@ -125,9 +126,17 @@ The architecture consists of three distinct layers:
 
 ---
 
-## Service Layer
+## Technical Integration
 
-The module exposes Python services for internal usage (Workers/Celery):
+### Import Policy
+To ensure compatibility with Django's application registry (especially during tests), always import models and services from their respective submodules. **Never** import from the root `billable` package.
+
+*   **Models**: `from billable.models import ...`
+*   **Services**: `from billable.services import ...`
+
+### Service Layer
+
+The module exposes Python services for internal usage (Workers/Celery). For use from **async context** (bots, ASGI), prefer the **async methods** of the API and services (e.g. `TransactionService.acheck_quota`, `OrderService.acreate_order`); they avoid blocking the event loop and integrate cleanly with async callers.
 
 *   **TransactionService**: The core entitlement engine. Handles granting (`grant_offer`), consumption (`consume_quota`), balance checks (`check_quota`), exchange (`exchange`), and expiration (`expire_batches`).
 *   **BalanceService**: Queries the user's inventory. Capable of filtering active batches by `product_key` and calculating aggregate balances.
@@ -214,6 +223,5 @@ async def on_first_purchase(sender, order, **kwargs):
 1.  **No Hardlinks**: No `ForeignKey` relationships to external application models. All links are logical (stored in metadata).
 2.  **Settings Based**: Configuration (API tokens, User model) is injected via Django `settings.py`.
 3.  **Event Driven**: Generates Django Signals (`order_confirmed`, `transaction_created`, `quota_consumed`) for decoupled integration with other local modules.
-4.  **Feature Based**: Products define capabilities via `metadata.features`, allowing flexible repackaging of SKUs without changing code.
-5.  **Idempotency**: Built-in protection against double-spending and duplicate processing at both the Order and Transaction levels.
-6.  **Separation of Concerns**: The billing engine handles **accounting**, not **marketing**. Promotion logic belongs in your application layer.
+4.  **Idempotency**: Built-in protection against double-spending and duplicate processing at both the Order and Transaction levels.
+5.  **Separation of Concerns**: The billing engine handles **accounting**, not **marketing**. Promotion logic belongs in your application layer.

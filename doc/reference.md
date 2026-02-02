@@ -15,6 +15,26 @@ The module relies on standard Django settings.
 | `BILLABLE_API_TITLE` | `"Billable Engine API"` | Title for the OpenAPI schema. |
 | `BILLABLE_CURRENCY` | `"USD"` | Default currency code (optional, depends on implementation). |
 
+**Database (PostgreSQL, async):** When using the module in async mode (ASGI, bots), set `CONN_MAX_AGE=0` for the PostgreSQL database in `DATABASES`. Persistent connections (`CONN_MAX_AGE` > 0) are not safe across async event loop context and can cause connection reuse issues; `CONN_MAX_AGE=0` closes the connection after each request/task.
+
+---
+
+## Usage Guidelines
+
+To avoid `AppRegistryNotReady` errors during initialization (e.g., in tests or with `pytest-django`), **do not** import models directly from the `billable` package.
+
+**Correct way to import models:**
+```python
+from billable.models import ExternalIdentity, Product, Offer
+```
+
+**Correct way to import services:**
+```python
+from billable.services import TransactionService, BalanceService
+```
+
+**Async context (bots, ASGI):** Prefer async methods of the API and services (e.g. `TransactionService.acheck_quota`, `OrderService.acreate_order`) so as not to block the event loop.
+
 ---
 
 ## Data Models
@@ -217,8 +237,8 @@ Create a new order (financial intent).
 
 #### `POST /orders/{order_id}/confirm`
 Confirm payment for an order and grant products.
-- **Entry point** for real money purchases (RUB, USD, XTR).
-- **Logic**: Transitions order to `PAID` and calls `TransactionService.grant_offer(source="purchase")`.
+- **Entry point** for real money purchases (RUB, USD, XTR). Webhooks from Stripe, YooKassa, or Telegram Payments are handled in **your application**: the app receives the webhook, extracts `order_id` and `payment_id`, then calls this endpoint. Billable does not expose a built-in webhook URL.
+- **Logic**: Transitions order to `PAID` and calls `TransactionService.grant_offer(source="purchase")`. Reprocessing the same `payment_id` does not create duplicate batches or transactions.
 - **Body**:
   ```json
   {

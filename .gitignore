@@ -10,3 +10,4 @@ dist/
 db.sqlite3
 .cursor
 /internal_doc
+/external_info

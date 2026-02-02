@@ -4,7 +4,7 @@
 
 `billable` is an isolated rights management and payments accounting system designed for Django. It abstracts monetization logic (subscriptions, one-time purchases, trials, quotas) from your core application business logic.
 
-Designed to work seamlessly with orchestrators like **n8n**, but fully usable as a standalone Python service layer.
+The module provides a single API and accounting layer for different orchestrators (n8n, bots, web), so each can use the same billing flows. Designed to work seamlessly with orchestrators like **n8n**, and fully usable as a standalone Python service layer.
 
 ## Status
 ![Status](https://img.shields.io/badge/Status-Active-success)
@@ -67,7 +67,20 @@ BILLABLE_API_TOKEN = env("BILLABLE_API_TOKEN", default="change-me-in-production"
 # BILLABLE_USER_MODEL = "custom_users.User" 
 ```
 
-### 2. Configure URLs
+### 2. Import Policy
+
+To avoid `AppRegistryNotReady` errors (especially in tests), **always** import models and services from their respective submodules. **Never** import directly from the root `billable` package.
+
+```python
+# Correct
+from billable.models import Product, ExternalIdentity
+from billable.services import TransactionService
+
+# Incorrect - will cause AppRegistryNotReady
+# from billable import Product, TransactionService
+```
+
+### 3. Configure URLs
 
 Include billable URLs in your main `urls.py`:
 
