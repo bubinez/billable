@@ -77,7 +77,9 @@ def convert_products_to_offers(apps, schema_editor):
             period_unit = 'days'
             period_value = getattr(product, 'period_days', 30)
         elif product.product_type == 'quantity':
-            quantity = getattr(product, 'quantity', 1)
+            raw_quantity = getattr(product, 'quantity', 1)
+            # Ensure quantity is at least 1 to satisfy PositiveIntegerField constraint
+            quantity = max(1, raw_quantity) if raw_quantity is not None else 1
 
         # Create OfferItem
         OfferItem.objects.create(
