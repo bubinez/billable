@@ -102,6 +102,8 @@ Create the tables prefixed with `billable_`:
 python manage.py migrate billable
 ```
 
+To migrate existing user identity fields (e.g. `telegram_id`, `chat_id`) into `ExternalIdentity`, run: `python manage.py migrate_identities <field> <provider>`. See [Reference — Management Commands](doc/reference.md#management-commands).
+
 ---
 
 ## Quick Start

@@ -21,6 +21,7 @@ It adheres to the **"Detachable"** principle: the module does not contain the bu
     *   Uniqueness is enforced for `(provider, external_id)`.
     *   **Resolution**: Use `ExternalIdentity.get_user_by_identity` (or its async version `aget_user_by_identity`) to resolve an external ID to a local `User` object.
 *   **Identify flow**: Orchestrators should call `POST /identify` at the start of a flow. The module always ensures a local `User` exists (creates and links if missing) and returns `user_id` for subsequent billing calls.
+*   **Migration of existing identities**: If identifiers are stored in fields on the User model (e.g. `telegram_id`, `chat_id`, `stripe_id`), the management command `migrate_identities` creates corresponding `ExternalIdentity` records in bulk. The command is idempotent and can be run multiple times for different field/provider pairs. See [Reference — Management Commands](reference.md#management-commands).
 *   **Abuse Protection**: The system provides `TrialHistory` model with SHA-256 identity hashing as a **tool** for fraud prevention. The actual trial/bonus logic should be implemented in your application layer.
 *   **Quota Check**: Before offering services, the system checks the user's quota balance by `product_key`.
 

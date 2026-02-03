@@ -152,6 +152,37 @@ External identity mapping for integrations.
 
 ---
 
+## Management Commands
+
+### `migrate_identities`
+
+Creates `ExternalIdentity` records from the values of a field on the User (or Custom User) model. Used for one-off migration of existing identifiers (e.g. `telegram_id`, `chat_id`, `stripe_id`) into the identities table. Idempotent: does not create duplicates for `(provider, external_id)`.
+
+**Syntax:**
+```bash
+python manage.py migrate_identities <field> <provider> [--dry-run] [--limit N]
+```
+
+| Argument / option | Description |
+|------------------|-------------|
+| `field` | Name of the field on the User model that holds the identifier (e.g. `chat_id`, `telegram_id`, `stripe_id`). |
+| `provider` | Provider name for `ExternalIdentity` (e.g. `telegram`, `stripe`). |
+| `--dry-run` | Print the plan without writing to the database. |
+| `--limit N` | Process at most N users (0 = no limit). |
+
+**Behaviour:** For each user with a non-empty field value, an `ExternalIdentity(provider=..., external_id=str(value), user=user)` record is created if that `(provider, external_id)` pair does not already exist. Users with an empty or `None` value for the field are skipped. If the field does not exist on the model, the command writes an error to stderr and exits without creating any records.
+
+**Examples:**
+```bash
+python manage.py migrate_identities telegram_id telegram
+python manage.py migrate_identities chat_id telegram --dry-run
+python manage.py migrate_identities stripe_id stripe --limit 100
+```
+
+You can run the command multiple times with different fields and providers for the same user; that user will have multiple `ExternalIdentity` records (one per provider/external_id pair).
+
+---
+
 ## REST API Specification
 
 The API is built with **Django Ninja**.
