@@ -39,7 +39,9 @@ class BalanceService:
         ).select_related('product')
 
         if product_key:
-            qs = qs.filter(product__product_key=product_key)
+            # Normalize product_key to uppercase
+            normalized_key = product_key.upper()
+            qs = qs.filter(product__product_key=normalized_key)
 
         now = timezone.now()
         qs = qs.filter(

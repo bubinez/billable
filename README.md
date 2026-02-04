@@ -1,3 +1,4 @@
+
 # Universal Billable Module
 
 **A Detachable Billing Engine for Django & Ninja**
@@ -20,6 +21,7 @@ The module provides a single API and accounting layer for different orchestrator
 - **Idempotency**: Built-in protection against double-spending and duplicate payments.
 - **Customer Merging**: Service and API for consolidating user accounts without data loss.
 - **REST API**: Ready-to-use Django Ninja API for frontend or external orchestrators.
+- **Normalization Policy**: Consistent uppercase (CAPS) storage for technical identifiers (SKU, Product Key) with "silent" API normalization.
 
 ---
 
@@ -104,6 +106,14 @@ python manage.py migrate billable
 
 To migrate existing user identity fields (e.g. `telegram_id`, `chat_id`) into `ExternalIdentity`, run: `python manage.py migrate_identities <field> <provider>`. See [Reference — Management Commands](doc/reference.md#management-commands).
 
+### 4. Data Normalization (CAPS Policy)
+
+To ensure data integrity and simplify searching, `billable` enforces a strict normalization policy:
+
+*   **SKU and Product Key**: Always stored in **UPPERCASE (CAPS)**.
+*   **API & Services**: The system is case-insensitive on input. Any string passed as a SKU or Product Key is automatically converted to uppercase before database lookup or storage ("Silent Normalization").
+*   **Trial Hashing**: *Exception.* To remain compatible with external standards (like Stripe or Google), user identifiers (emails, IDs) are converted to **lowercase** before SHA-256 hashing in `TrialHistory`.
+
 ---
 
 ## Quick Start
@@ -150,6 +160,8 @@ order = await OrderService.acreate_order(
 
 `billable` provides **building blocks** for fraud prevention and transaction management, but does NOT include business rules for promotions. Here's how to implement trial logic in your application:
 
+### Example 1: Welcome Trial (One-time bonus)
+
 ```python
 from billable.models import Offer, TrialHistory
 from billable.services import TransactionService
@@ -184,7 +196,32 @@ async def claim_welcome_trial(user_id: int, telegram_id: str):
     return {"success": True, "batches": batches}
 ```
 
-For complex promotion campaigns (multi-step bonuses, referral rewards, etc.), create a dedicated `PromotionService` in your application layer that orchestrates calls to `TransactionService`.
+### Example 2: Referral Bonus (Signal-based)
+
+```python
+from django.dispatch import receiver
+from billable.models import Referral, Offer
+from billable.signals import order_confirmed
+from billable.services import TransactionService
+
+@receiver(order_confirmed)
+def on_first_purchase(sender, order, **kwargs):
+    # 1. Check if it's the first purchase using your app's logic
+    # ...
+
+    # 2. Find referral
+    referral = Referral.objects.filter(referee=order.user).first()
+    
+    # 3. Atomically claim the bonus (returns True only once)
+    if referral and referral.claim_bonus():
+        # 4. Grant the reward
+        offer = Offer.objects.get(sku="referral_reward")
+        TransactionService.grant_offer(
+            user_id=referral.referrer_id, 
+            offer=offer, 
+            source="referral_bonus"
+        )
+```
 
 ### REST API Usage
 If you are using **n8n** or a frontend:

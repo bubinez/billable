@@ -226,7 +226,7 @@ class TestBillableAPI:
         balances = res_w.json()["balances"]
         assert balances["TOKENS"] == 100
         assert balances["PREMIUM"] == 1
-        assert balances["internal"] == 200
+        assert balances["INTERNAL"] == 200
 
     async def test_create_order_400_on_unknown_sku(self, api_client, test_user):
         """POST /orders with unknown sku returns 400 and message about offer not found."""
@@ -306,7 +306,7 @@ class TestBillableAPI:
         # 3. Check balances
         res_w = await api_client.get(f"/wallet?user_id={test_user.id}")
         balances = res_w.json()["balances"]
-        assert balances["internal"] == 200 # 500 - 300
+        assert balances["INTERNAL"] == 200 # 500 - 300
         assert balances["TOKENS"] == 100
         assert balances["PREMIUM"] == 1
 
@@ -329,7 +329,7 @@ class TestBillableAPI:
 
         res_w = await api_client.get(f"/wallet?user_id={test_user.id}")
         balances = res_w.json()["balances"]
-        assert balances["internal"] == 200
+        assert balances["INTERNAL"] == 200
         assert balances["TOKENS"] == 100
         assert balances["PREMIUM"] == 1
 

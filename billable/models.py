@@ -17,6 +17,52 @@ from django.utils import timezone
 from .conf import billable_settings
 
 
+class ProductQuerySet(models.QuerySet):
+    """
+    Custom QuerySet for Product model that normalizes product_key to uppercase.
+    """
+
+    def update(self, **kwargs) -> int:
+        """
+        Normalize product_key to uppercase before updating.
+        """
+        if 'product_key' in kwargs and kwargs['product_key']:
+            kwargs['product_key'] = kwargs['product_key'].upper()
+        return super().update(**kwargs)
+
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False) -> list[Product]:
+        """
+        Normalize product_key to uppercase for all objects before bulk creation.
+        """
+        for obj in objs:
+            if obj.product_key:
+                obj.product_key = obj.product_key.upper()
+        return super().bulk_create(objs, batch_size=batch_size, ignore_conflicts=ignore_conflicts)
+
+
+class OfferQuerySet(models.QuerySet):
+    """
+    Custom QuerySet for Offer model that normalizes SKU to uppercase.
+    """
+
+    def update(self, **kwargs) -> int:
+        """
+        Normalize SKU to uppercase before updating.
+        """
+        if 'sku' in kwargs and kwargs['sku']:
+            kwargs['sku'] = kwargs['sku'].upper()
+        return super().update(**kwargs)
+
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False) -> list[Offer]:
+        """
+        Normalize SKU to uppercase for all objects before bulk creation.
+        """
+        for obj in objs:
+            if obj.sku:
+                obj.sku = obj.sku.upper()
+        return super().bulk_create(objs, batch_size=batch_size, ignore_conflicts=ignore_conflicts)
+
+
 class Product(models.Model):
     """
     Fundamental entity, technical resource or access right.
@@ -33,7 +79,7 @@ class Product(models.Model):
         null=True,
         blank=True,
         verbose_name="Product Key",
-        help_text="Unique product key (e.g., 'diamonds', 'vip_access')",
+        help_text="Unique product key (e.g., 'DIAMONDS', 'VIP_ACCESS'). Automatically normalized to uppercase (CAPS) when saved.",
     )
     name = models.CharField(max_length=100, verbose_name="Product Name")
     description = models.TextField(blank=True, verbose_name="Product Description")
@@ -61,6 +107,8 @@ class Product(models.Model):
         verbose_name="Additional Parameters",
     )
 
+    objects = ProductQuerySet.as_manager()
+
     class Meta:
         db_table = "billable_products"
         verbose_name = "Product"
@@ -82,6 +130,14 @@ class Product(models.Model):
                 )
         super().clean()
 
+    def save(self, *args, **kwargs) -> None:
+        """
+        Normalize product_key to uppercase before saving.
+        """
+        if self.product_key:
+            self.product_key = self.product_key.upper()
+        super().save(*args, **kwargs)
+
     def __str__(self) -> str:
         return f"{self.name} ({self.get_product_type_display()})"
 
@@ -95,7 +151,7 @@ class Offer(models.Model):
         max_length=50,
         unique=True,
         verbose_name="SKU",
-        help_text="Commercial deal identifier. Used for grants and purchases.",
+        help_text="Commercial deal identifier (e.g., 'OFF_DIAMONDS_100'). Automatically normalized to uppercase (CAPS) when saved. Used for grants and purchases.",
     )
     name = models.CharField(max_length=255, verbose_name="Offer Name")
     price = models.DecimalField(
@@ -119,6 +175,8 @@ class Offer(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     metadata = models.JSONField(default=dict, blank=True, verbose_name="Metadata")
 
+    objects = OfferQuerySet.as_manager()
+
     class Meta:
         db_table = "billable_offers"
         verbose_name = "Offer"
@@ -135,6 +193,14 @@ class Offer(models.Model):
                     {"sku": f"Conflict: '{self.sku}' is already used as a Product Key."}
                 )
         super().clean()
+
+    def save(self, *args, **kwargs) -> None:
+        """
+        Normalize SKU to uppercase before saving.
+        """
+        if self.sku:
+            self.sku = self.sku.upper()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.name} ({self.price} {self.currency})"
@@ -820,16 +886,26 @@ class Referral(models.Model):
         bonus_status = "✓" if self.bonus_granted else "✗"
         return f"{self.referrer_id} → {self.referee_id} (bonus: {bonus_status})"
 
-    def grant_bonus(self) -> None:
+    def claim_bonus(self) -> bool:
         """
-        Marks bonus as granted.
+        Atomically marks bonus as granted.
         
-        Sets bonus_granted=True and bonus_granted_at=now().
+        Returns:
+            bool: True if the bonus was successfully claimed (was not granted before),
+                  False if it was already granted.
         """
-        if not self.bonus_granted:
+        # Atomic update to prevent race conditions
+        rows = Referral.objects.filter(pk=self.pk, bonus_granted=False).update(
+            bonus_granted=True, 
+            bonus_granted_at=timezone.now()
+        )
+        
+        if rows > 0:
+            # Update local instance to reflect DB change
             self.bonus_granted = True
             self.bonus_granted_at = timezone.now()
-            self.save(update_fields=["bonus_granted", "bonus_granted_at"])
+            return True
+        return False
 
 
 from .models_proxy import Customer

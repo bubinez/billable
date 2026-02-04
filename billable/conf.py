@@ -34,5 +34,6 @@ class AppSettings:
         return getattr(settings, "BILLABLE_API_TITLE", "Billable Engine API")
 
 
+
 # Create singleton instance
 billable_settings = AppSettings()

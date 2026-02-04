@@ -210,7 +210,9 @@ async def acheck_user_balance(request, user_id: int | None = None, product_key: 
     if resolved_user_id is None:
         return {"can_use": False, "product_key": product_key, "remaining": 0, "message": "user_id is required"}
 
-    result = await TransactionService.acheck_quota(resolved_user_id, product_key)
+    # Normalize product_key to uppercase
+    normalized_product_key = product_key.upper() if product_key else ""
+    result = await TransactionService.acheck_quota(resolved_user_id, normalized_product_key)
     return result
 
 
@@ -233,7 +235,9 @@ async def alist_user_products(request, user_id: int | None = None, product_key: 
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}
 
-    return await BalanceService.aget_user_active_products(user_id=resolved_user_id, product_key=product_key or None)
+    # Normalize product_key to uppercase
+    normalized_product_key = product_key.upper() if product_key else None
+    return await BalanceService.aget_user_active_products(user_id=resolved_user_id, product_key=normalized_product_key)
 
 
 @router.post("/wallet/consume", response={200: CommonResponse, 400: CommonResponse})
@@ -255,9 +259,11 @@ async def aconsume_user_quota(request, data: QuotaConsumeSchema):
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}
 
+    # Normalize product_key to uppercase
+    normalized_product_key = data.product_key.upper() if data.product_key else ""
     result = await TransactionService.aconsume_quota(
         user_id=resolved_user_id,
-        product_key=data.product_key,
+        product_key=normalized_product_key,
         action_type=data.action_type,
         action_id=data.action_id,
         idempotency_key=data.idempotency_key,
@@ -302,7 +308,9 @@ async def ademo_grant_trial(request, data: TrialGrantSchema):
 
     # 2. Find the trial offer (you should create an Offer with sku="trial" in your DB)
     try:
-        offer = await Offer.objects.filter(sku=data.sku, is_active=True).afirst() if data.sku else None
+        # Normalize SKU to uppercase
+        normalized_sku = data.sku.upper() if data.sku else None
+        offer = await Offer.objects.filter(sku=normalized_sku, is_active=True).afirst() if normalized_sku else None
         if not offer:
             return 400, {"success": False, "message": "Trial offer not found"}
     except Exception as e:
@@ -346,8 +354,10 @@ async def aget_catalog_offer(request, sku: str):
     Returns 404 if offer does not exist or is inactive.
     Response fields: sku, name, price, currency, description, image, is_active, items, metadata.
     """
+    # Normalize SKU to uppercase
+    normalized_sku = sku.upper() if sku else ""
     offer = await (
-        Offer.objects.filter(sku=sku, is_active=True)
+        Offer.objects.filter(sku=normalized_sku, is_active=True)
         .prefetch_related("items__product")
         .afirst()
     )
@@ -372,14 +382,17 @@ async def alist_catalog(request):
             offers.append(offer)
         return offers
 
+    # Normalize all SKUs to uppercase
+    normalized_sku_list = [sku.upper() for sku in sku_list]
     qs = (
-        Offer.objects.filter(sku__in=sku_list, is_active=True)
+        Offer.objects.filter(sku__in=normalized_sku_list, is_active=True)
         .prefetch_related("items__product")
     )
     by_sku: dict[str, Offer] = {}
     async for offer in qs.aiterator():
         by_sku[offer.sku] = offer
-    return [by_sku[s] for s in sku_list if s in by_sku]
+    # Return in original order, matching by normalized SKU
+    return [by_sku[normalized_sku] for normalized_sku in normalized_sku_list if normalized_sku in by_sku]
 
 
 @router.get("/wallet", response=WalletBalanceSchema)
@@ -459,7 +472,9 @@ async def aget_wallet_transactions(
     txs = []
     qs = Transaction.objects.filter(user_id=uid)
     if product_key:
-        qs = qs.filter(quota_batch__product__product_key=product_key)
+        # Normalize product_key to uppercase
+        normalized_product_key = product_key.upper()
+        qs = qs.filter(quota_batch__product__product_key=normalized_product_key)
     if action_type:
         qs = qs.filter(action_type=action_type)
     if date_from:
@@ -492,7 +507,9 @@ async def aexchange_offer(request, data: ExchangeSchema):
         return 400, {"success": False, "message": "user_id is required"}
 
     try:
-        offer = await Offer.objects.aget(sku=data.sku)
+        # Normalize SKU to uppercase
+        normalized_sku = data.sku.upper() if data.sku else ""
+        offer = await Offer.objects.aget(sku=normalized_sku)
         result = await TransactionService.aexchange(user_id=resolved_user_id, offer=offer)
         if not result.get("success", True):
             return 400, {"success": False, "message": result.get("message", "Exchange failed")}

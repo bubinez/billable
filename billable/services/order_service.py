@@ -32,11 +32,13 @@ def _prepare_order_items(items: List[dict[str, Any]]) -> tuple[Decimal, List[dic
         sku = item.get("sku")
         if not sku:
             raise ValueError("Item must have 'sku'")
+        # Normalize SKU to uppercase for search
+        normalized_sku = sku.upper()
         quantity = item.get("quantity", 1)
 
-        offer = Offer.objects.filter(sku=sku, is_active=True).first()
+        offer = Offer.objects.filter(sku=normalized_sku, is_active=True).first()
         if not offer:
-            offer = Offer.objects.filter(sku=sku).first()
+            offer = Offer.objects.filter(sku=normalized_sku).first()
         if not offer:
             raise ValueError(f"Offer not found for sku: {sku!r}")
 
@@ -64,11 +66,13 @@ async def _aprepare_order_items(items: List[dict[str, Any]]) -> tuple[Decimal, L
         sku = item.get("sku")
         if not sku:
             raise ValueError("Item must have 'sku'")
+        # Normalize SKU to uppercase for search
+        normalized_sku = sku.upper()
         quantity = item.get("quantity", 1)
 
-        offer = await Offer.objects.filter(sku=sku, is_active=True).afirst()
+        offer = await Offer.objects.filter(sku=normalized_sku, is_active=True).afirst()
         if not offer:
-            offer = await Offer.objects.filter(sku=sku).afirst()
+            offer = await Offer.objects.filter(sku=normalized_sku).afirst()
         if not offer:
             raise ValueError(f"Offer not found for sku: {sku!r}")
 

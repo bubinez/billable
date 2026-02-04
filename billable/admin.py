@@ -246,6 +246,9 @@ class ProductAdmin(admin.ModelAdmin):
         (_("📦 Technical DNA (The Product)"), {
             "fields": ("product_key", "name", "description", "product_type", "is_active"),
             "description": mark_safe("""
+                <p style="color: #417690; font-weight: bold; margin-bottom: 10px;">
+                    ℹ️ Product Key is automatically normalized to uppercase (CAPS) when saved.
+                </p>
                 <script>
                 (function($) {
                     $(function() {
@@ -303,7 +306,7 @@ class ProductAdmin(admin.ModelAdmin):
             period_value = form.cleaned_data.get("offer_period_value")
 
             # Create the Offer
-            sku = f"get_{obj.product_key}" if obj.product_key else f"get_{obj.id}"
+            sku = f"GET_{obj.product_key}" if obj.product_key else f"GET_{obj.id}"
             
             # If an offer with this SKU already exists, we might want to update it 
             # or create one with a suffix. Given the PRD, system offers should have get_ prefix.
@@ -340,9 +343,19 @@ class OfferAdmin(admin.ModelAdmin):
 
     list_display = ("id", "sku", "name", "price", "currency", "is_active", "created_at")
     list_filter = ("currency", "is_active", "created_at")
-    search_fields = ("name", "description")
+    search_fields = ("sku", "name", "description")
     readonly_fields = ("id", "created_at")
     inlines = (OfferItemInline,)
+    
+    def get_form(self, request, obj=None, **kwargs):
+        """Add help text about SKU normalization."""
+        form = super().get_form(request, obj, **kwargs)
+        if 'sku' in form.base_fields:
+            form.base_fields['sku'].help_text = _(
+                "SKU is automatically normalized to uppercase (CAPS) when saved. "
+                "Example: 'test_offer' becomes 'TEST_OFFER'."
+            )
+        return form
 
 
 @admin.register(QuotaBatch)

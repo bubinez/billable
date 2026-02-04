@@ -29,8 +29,13 @@ class ProductService:
 
     @classmethod
     def get_product_by_key(cls, product_key: str) -> Product | None:
-        """Finds a product by its product_key."""
-        return Product.objects.filter(product_key=product_key, is_active=True).first()
+        """
+        Finds a product by its product_key.
+        
+        Normalizes product_key to uppercase before searching.
+        """
+        normalized_key = product_key.upper() if product_key else None
+        return Product.objects.filter(product_key=normalized_key, is_active=True).first()
 
     @classmethod
     def get_trial_products(cls) -> List[Product]:
@@ -53,5 +58,10 @@ class ProductService:
 
     @classmethod
     async def aget_product_by_key(cls, product_key: str) -> Product | None:
-        """Async version: Finds a product by its product_key."""
-        return await Product.objects.filter(product_key=product_key, is_active=True).afirst()
+        """
+        Async version: Finds a product by its product_key.
+        
+        Normalizes product_key to uppercase before searching.
+        """
+        normalized_key = product_key.upper() if product_key else None
+        return await Product.objects.filter(product_key=normalized_key, is_active=True).afirst()

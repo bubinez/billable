@@ -14,25 +14,25 @@ class TestSharedNamespace:
 
     def test_product_key_conflict_with_offer_sku(self):
         """Test that Product cannot have a product_key that is already an Offer SKU."""
-        Offer.objects.create(sku="conflicting_key", name="Test Offer", price=100, currency="USD")
+        Offer.objects.create(sku="CONFLICTING_KEY", name="Test Offer", price=100, currency="USD")
         
-        product = Product(product_key="conflicting_key", name="Test Product", product_type=Product.ProductType.QUANTITY)
+        product = Product(product_key="CONFLICTING_KEY", name="Test Product", product_type=Product.ProductType.QUANTITY)
         
         with pytest.raises(ValidationError) as excinfo:
             product.clean()
         
-        assert "Conflict: 'conflicting_key' is already used as an Offer SKU." in str(excinfo.value)
+        assert "Conflict: 'CONFLICTING_KEY' is already used as an Offer SKU." in str(excinfo.value)
 
     def test_offer_sku_conflict_with_product_key(self):
         """Test that Offer cannot have a sku that is already a Product product_key."""
-        Product.objects.create(product_key="conflicting_key", name="Test Product", product_type=Product.ProductType.QUANTITY)
+        Product.objects.create(product_key="CONFLICTING_KEY", name="Test Product", product_type=Product.ProductType.QUANTITY)
         
-        offer = Offer(sku="conflicting_key", name="Test Offer", price=100, currency="USD")
+        offer = Offer(sku="CONFLICTING_KEY", name="Test Offer", price=100, currency="USD")
         
         with pytest.raises(ValidationError) as excinfo:
             offer.clean()
         
-        assert "Conflict: 'conflicting_key' is already used as a Product Key." in str(excinfo.value)
+        assert "Conflict: 'CONFLICTING_KEY' is already used as a Product Key." in str(excinfo.value)
 
     def test_no_conflict_different_keys(self):
         """Test that no validation error occurs when keys are different."""
@@ -79,8 +79,8 @@ class TestAdminAutoOfferCreation:
         # Call save_model to trigger offer creation
         admin.save_model(request, product, form, change=True)
         
-        # Verify Offer was created
-        offer = Offer.objects.get(sku="get_diamonds")
+        # Verify Offer was created (SKU is normalized to CAPS)
+        offer = Offer.objects.get(sku="GET_DIAMONDS")
         assert offer.name == product.name
         assert offer.price == 100.00
         assert offer.currency == "USD"
@@ -105,8 +105,8 @@ class TestAdminAutoOfferCreation:
             product_type=Product.ProductType.QUANTITY
         )
         
-        # Create an existing offer with get_gold
-        Offer.objects.create(sku="get_gold", name="Existing Gold", price=50, currency="USD")
+        # Create an existing offer with GET_GOLD (normalized to CAPS)
+        Offer.objects.create(sku="GET_GOLD", name="Existing Gold", price=50, currency="USD")
         
         class MockForm:
             cleaned_data = {
@@ -120,8 +120,8 @@ class TestAdminAutoOfferCreation:
         form = MockForm()
         admin.save_model(request, product, form, change=True)
         
-        # Verify a new offer with a suffix was created
-        offer = Offer.objects.get(sku="get_gold_1")
+        # Verify a new offer with a suffix was created (normalized to CAPS)
+        offer = Offer.objects.get(sku="GET_GOLD_1")
         assert offer.price == 150.00
 
 @pytest.mark.django_db

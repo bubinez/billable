@@ -56,7 +56,7 @@ def convert_products_to_offers(apps, schema_editor):
 
     for product in Product.objects.all():
         # Create Offer with 'get_' prefix
-        offer_sku = f"get_{product.product_key}" if product.product_key else f"get_prod_{product.id}"
+        offer_sku = f"GET_{product.product_key}" if product.product_key else f"GET_PROD_{product.id}"
         
         offer = Offer.objects.create(
             sku=offer_sku,
@@ -99,7 +99,28 @@ def finalize_test_data(apps, schema_editor):
     Finalize test data: set TEST_PREDICTION offer currency to STAR.
     """
     Offer = apps.get_model('billable', 'Offer')
-    Offer.objects.filter(sku='get_TEST_PREDICTION').update(currency='TEST_STAR')
+    Offer.objects.filter(sku='GET_TEST_PREDICTION').update(currency='TEST_STAR')
+
+
+def normalize_to_uppercase(apps, schema_editor):
+    """
+    Normalize all SKU and product_key values to uppercase.
+    This ensures consistency with the new normalization policy.
+    """
+    Product = apps.get_model('billable', 'Product')
+    Offer = apps.get_model('billable', 'Offer')
+    
+    # Normalize Product.product_key
+    for product in Product.objects.all():
+        if product.product_key:
+            product.product_key = product.product_key.upper()
+            product.save(update_fields=['product_key'])
+    
+    # Normalize Offer.sku
+    for offer in Offer.objects.all():
+        if offer.sku:
+            offer.sku = offer.sku.upper()
+            offer.save(update_fields=['sku'])
 
 
 def migrate_inventory_and_history(apps, schema_editor):
@@ -319,6 +340,7 @@ class Migration(migrations.Migration):
         ),
         migrations.RunPython(convert_products_to_offers, reverse_code=migrations.RunPython.noop),
         migrations.RunPython(finalize_test_data, reverse_code=migrations.RunPython.noop),
+        migrations.RunPython(normalize_to_uppercase, reverse_code=migrations.RunPython.noop),
         migrations.RemoveField(
             model_name='orderitem',
             name='period_days',

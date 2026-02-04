@@ -39,6 +39,8 @@ class TransactionService:
         """
         Finds active batches for a user, filtered by product_key.
         Returns QuerySet[QuotaBatch].
+        
+        Normalizes product_key to uppercase before filtering.
         """
         now = timezone.now()
         qs = QuotaBatch.objects.filter(
@@ -49,7 +51,9 @@ class TransactionService:
         ).select_related('product')
 
         if product_key:
-            qs = qs.filter(product__product_key=product_key)
+            # Normalize product_key to uppercase
+            normalized_key = product_key.upper()
+            qs = qs.filter(product__product_key=normalized_key)
         return qs
 
     @classmethod
@@ -81,17 +85,21 @@ class TransactionService:
         if total > 0:
             first_batch = batches.first()
             product_name = first_batch.product.name if first_batch else "Product"
+            # Return normalized product_key
+            normalized_key = product_key.upper() if product_key else ""
             return {
                 "can_use": True,
-                "product_key": product_key,
+                "product_key": normalized_key,
                 "product_name": product_name,
                 "remaining": total,
                 "message": f"Available: {product_name} ({total} left)"
             }
+        # Return normalized product_key
+        normalized_key = product_key.upper() if product_key else ""
         return {
             "can_use": False,
-            "product_key": product_key,
-            "message": f"No active quota for {product_key}",
+            "product_key": normalized_key,
+            "message": f"No active quota for {normalized_key}",
             "remaining": 0
         }
 
@@ -107,18 +115,20 @@ class TransactionService:
                 product_name = batch.product.name
                 found = True
             total += batch.remaining_quantity
+        # Return normalized product_key
+        normalized_key = product_key.upper() if product_key else ""
         if total > 0:
             return {
                 "can_use": True,
-                "product_key": product_key,
+                "product_key": normalized_key,
                 "product_name": product_name,
                 "remaining": total,
                 "message": f"Available: {product_name} ({total} left)"
             }
         return {
             "can_use": False,
-            "product_key": product_key,
-            "message": f"No active quota for {product_key}",
+            "product_key": normalized_key,
+            "message": f"No active quota for {normalized_key}",
             "remaining": 0
         }
 
@@ -329,12 +339,12 @@ class TransactionService:
         if not offer and offer_id: offer = Offer.objects.get(pk=offer_id)
         if not offer: raise ValueError("Offer not found")
         
-        # 1. Determine the source product key from offer.currency (match Product.product_key as stored, no lowercasing)
-        currency_sku = offer.currency.strip()
+        # 1. Determine the source product key from offer.currency (normalize to uppercase)
+        currency_sku = offer.currency.strip().upper()
         
         # 2. Validate that the product is marked as a currency
         try:
-            source_product = Product.objects.get(product_key__iexact=currency_sku)
+            source_product = Product.objects.get(product_key=currency_sku)
             if not source_product.is_currency:
                 raise ValueError(f"Product '{currency_sku}' is not marked as a currency for exchange.")
             # Use the actual product key from the DB for consumption

@@ -31,7 +31,7 @@ class ProductSchema(BaseSchema):
     """
 
     id: int = Field(..., description="Primary key of the product.")
-    product_key: str | None = Field(None, description="Unique identifier for accounting (e.g. diamonds, vip_access). Noun, singular.")
+    product_key: str | None = Field(None, description="Unique identifier for accounting (e.g. DIAMONDS, VIP_ACCESS). Stored in uppercase (CAPS). Noun, singular.")
     name: str = Field(..., description="Display name of the product.")
     description: str = Field("", description="Optional text description.")
     product_type: str = Field(..., description="Type: PERIOD (time-based), QUANTITY (consumable), UNLIMITED (permanent).")
@@ -86,7 +86,7 @@ class OfferSchema(BaseSchema):
     SKU prefixes: off_ (base), pack_ (bundle), promo_ (sale). Currency may be INTERNAL for balance exchange.
     """
 
-    sku: str = Field(..., description="Commercial identifier (e.g. off_diamonds_100, pack_premium).")
+    sku: str = Field(..., description="Commercial identifier (e.g. OFF_DIAMONDS_100, PACK_PREMIUM). Stored in uppercase (CAPS).")
     name: str = Field(..., description="Display name of the offer.")
     price: Decimal = Field(..., description="Price per unit.")
     currency: str = Field(..., description="Currency code: EUR, USD, XTR, INTERNAL, etc.")
@@ -202,7 +202,7 @@ class OrderCreateSchema(BaseModel):
     user_id: int | None = Field(None, description="Local billing user ID; required if external_id not provided.")
     external_id: str | None = Field(None, description="External identifier (e.g. telegram chat id); used with provider.")
     provider: str | None = Field(None, description="Identity provider (e.g. telegram, n8n). Defaults to 'default'.")
-    items: list[dict[str, Any]] = Field(..., description="List of {sku: str, quantity: int}. At least one item required.")
+    items: list[dict[str, Any]] = Field(..., description="List of {sku: str, quantity: int}. SKU is automatically normalized to uppercase. At least one item required.")
     metadata: dict[str, Any] | None = Field(None, description="Optional application-specific payload (e.g. report_id).")
 
 
@@ -233,7 +233,7 @@ class QuotaConsumeSchema(BaseModel):
     user_id: int | None = Field(None, description="Local billing user ID; required if external_id not provided.")
     external_id: str | None = Field(None, description="External identifier; used with provider to resolve user.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
-    product_key: str = Field(..., description="Product key to consume (e.g. pdf_export, diamonds).")
+    product_key: str = Field(..., description="Product key to consume (e.g. PDF_EXPORT, DIAMONDS). Automatically normalized to uppercase.")
     action_type: str = Field(..., description="Reason for consumption (e.g. usage, admin_adjustment).")
     action_id: str | None = Field(None, description="Optional external reference (e.g. report_id).")
     idempotency_key: str | None = Field(None, description="Optional key to prevent duplicate consumption for same action.")
@@ -249,7 +249,7 @@ class QuotaCheckSchema(BaseModel):
     user_id: int | None = Field(None, description="Local billing user ID.")
     external_id: str | None = Field(None, description="External identifier; used with provider.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
-    product_key: str = Field(..., description="Product key to check (e.g. pdf_export).")
+    product_key: str = Field(..., description="Product key to check (e.g. PDF_EXPORT). Automatically normalized to uppercase.")
 
 
 class TrialGrantSchema(BaseModel):
@@ -261,7 +261,7 @@ class TrialGrantSchema(BaseModel):
     user_id: int | None = Field(None, description="Local billing user ID; required if external_id not provided.")
     external_id: str | None = Field(None, description="External identifier; used with provider.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
-    sku: str | None = Field(None, description="Offer SKU to grant as trial (e.g. off_trial_pack).")
+    sku: str | None = Field(None, description="Offer SKU to grant as trial (e.g. OFF_TRIAL_PACK). Automatically normalized to uppercase.")
     grant_type: str = Field("trial", description="Grant type label; typically 'trial'.")
 
 
@@ -312,7 +312,7 @@ class ExchangeSchema(BaseModel):
     user_id: int | None = Field(None, description="Local billing user ID; required if external_id not provided.")
     external_id: str | None = Field(None, description="External identifier; used with provider.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
-    sku: str = Field(..., description="Offer SKU to grant (e.g. off_premium_pack). Internal currency is consumed automatically.")
+    sku: str = Field(..., description="Offer SKU to grant (e.g. OFF_PREMIUM_PACK). Automatically normalized to uppercase. Internal currency is consumed automatically.")
 
 
 # --- Schemas for Output Data (Responses) ---

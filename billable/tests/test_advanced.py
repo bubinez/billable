@@ -18,7 +18,7 @@ def test_user(db):
 @pytest.fixture
 def qty_product(db):
     return Product.objects.create(
-        product_key="tokens",
+        product_key="TOKENS",
         name="Tokens",
         product_type=Product.ProductType.QUANTITY,
     )
@@ -34,14 +34,14 @@ def period_product(db):
 @pytest.fixture
 def unlimited_product(db):
     return Product.objects.create(
-        product_key="unlimited_access",
+        product_key="UNLIMITED_ACCESS",
         name="Unlimited Access",
         product_type=Product.ProductType.UNLIMITED,
     )
 
 @pytest.fixture
 def basic_offer(db, qty_product):
-    offer = Offer.objects.create(sku="off_tokens_100", name="100 Tokens", price=10, currency="USD")
+    offer = Offer.objects.create(sku="OFF_TOKENS_100", name="100 Tokens", price=10, currency="USD")
     OfferItem.objects.create(offer=offer, product=qty_product, quantity=100)
     return offer
 
@@ -208,7 +208,7 @@ class TestAuditRefund:
         TransactionService.grant_offer(test_user.id, basic_offer, order_item=order_item)
         
         # Check batch
-        batch = QuotaBatch.objects.get(user=test_user, product__product_key="tokens")
+        batch = QuotaBatch.objects.get(user=test_user, product__product_key="TOKENS")
         assert batch.order_item == order_item
         assert batch.order_item.order == order
         

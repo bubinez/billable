@@ -22,7 +22,7 @@ It adheres to the **"Detachable"** principle: the module does not contain the bu
     *   **Resolution**: Use `ExternalIdentity.get_user_by_identity` (or its async version `aget_user_by_identity`) to resolve an external ID to a local `User` object.
 *   **Identify flow**: Orchestrators should call `POST /identify` at the start of a flow. The module always ensures a local `User` exists (creates and links if missing) and returns `user_id` for subsequent billing calls.
 *   **Migration of existing identities**: If identifiers are stored in fields on the User model (e.g. `telegram_id`, `chat_id`, `stripe_id`), the management command `migrate_identities` creates corresponding `ExternalIdentity` records in bulk. The command is idempotent and can be run multiple times for different field/provider pairs. See [Reference — Management Commands](reference.md#management-commands).
-*   **Abuse Protection**: The system provides `TrialHistory` model with SHA-256 identity hashing as a **tool** for fraud prevention. The actual trial/bonus logic should be implemented in your application layer.
+*   **Abuse Protection**: The system provides `TrialHistory` model with SHA-256 identity hashing as a **tool** for fraud prevention. User identifiers are normalized to **lowercase** before hashing to ensure consistency across different input sources.
 *   **Quota Check**: Before offering services, the system checks the user's quota balance by `product_key`.
 
 ### 2. Order Life Cycle (Order Flow)
@@ -76,10 +76,17 @@ The system enforces a strict distinction between technical resources and commerc
     -   **Access/Balance** methods (checking rights) accept `product_key`.
     -   **Grant/Purchase** methods (giving rights) accept `sku`.
 -   **Naming Convention**:
-    -   `product_key`: **What** is being tracked (e.g., `diamonds`, `vip_access`). Noun, singular.
-    -   `sku`: **How** it is sold (e.g., `off_diamonds`, `pack_vip_30d`). Prefixes: `off_` (base), `pack_` (bundle), `promo_` (sale).
+    -   `product_key`: **What** is being tracked (e.g., `DIAMONDS`, `VIP_ACCESS`). Stored in **uppercase (CAPS)**.
+    -   `sku`: **How** it is sold (e.g., `OFF_DIAMONDS`, `PACK_VIP_30D`). Prefixes: `OFF_` (base), `PACK_` (bundle), `PROMO_` (sale). Stored in **uppercase (CAPS)**.
 
-### 5. Transaction Engine (Entitlement Management)
+### 5. Normalization Policy (CAPS)
+
+The system enforces consistent uppercase storage for technical identifiers:
+1.  **Silent Normalization**: API and Service methods accept any case and automatically call `.upper()` before database operations.
+2.  **Zero Collisions**: Since all keys are uppercase, `gold_100` and `GOLD_100` are treated as the same entity.
+3.  **Exception (Trial Hashes)**: User emails and IDs are hashed in **lowercase** to maintain compatibility with external systems.
+
+### 6. Transaction Engine (Entitlement Management)
 The module uses a **Transaction-based Ledger** approach where all balance changes are recorded as immutable transactions.
 
 *   **QuotaBatch**: The source of truth for user rights. Each batch represents a portion of a product granted to a user.
@@ -208,22 +215,22 @@ from billable.services import TransactionService
 @receiver(order_confirmed)
 async def on_first_purchase(sender, order, **kwargs):
     # Check if this is the first purchase
-    is_first = not await Order.objects.filter(
-        user_id=order.user_id,
-        status=Order.Status.PAID
-    ).exclude(id=order.id).aexists()
-    
-    if is_first:
-        # Find referrer
-        referral = await Referral.objects.filter(referee_id=order.user_id).afirst()
+    if not await Order.objects.filter(user=order.user, status=Order.Status.PAID).exclude(id=order.id).aexists():
+        
+        # Atomically claim bonus
+        referral = await Referral.objects.filter(referee=order.user).afirst()
+        
         if referral:
-            # Grant bonus to referrer
-            bonus_offer = await Offer.objects.aget(sku="off_referral_bonus")
-            await sync_to_async(TransactionService.grant_offer)(
-                user_id=referral.referrer_id,
-                offer=bonus_offer,
-                source="referral_reward"
-            )
+             # Sync wrapper or async equivalent for model method required in async context
+             claimed = await sync_to_async(referral.claim_bonus)()
+             
+             if claimed:
+                bonus_offer = await Offer.objects.aget(sku="off_referral_bonus")
+                await sync_to_async(TransactionService.grant_offer)(
+                    user_id=referral.referrer_id,
+                    offer=bonus_offer,
+                    source="referral_reward"
+                )
 ```
 
 ---

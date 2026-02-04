@@ -44,7 +44,7 @@ All database tables are prefixed with `billable_`. In every model, *user* (FK to
 ### Product (`billable_products`)
 The catalog of available resources.
 
-- **`product_key`** *(CharField, PK)*: Unique string identifier for accounting (e.g., `diamonds`, `vip_access`). Noun, singular.
+- **`product_key`** *(CharField, PK)*: Unique string identifier for accounting (e.g., `DIAMONDS`, `VIP_ACCESS`). Stored in **uppercase (CAPS)**. Automatically normalized on save.
 - **`name`** / **`description`**: Display fields.
 - **`product_type`** *(Choice)*:
     - `PERIOD`: Time-based access.
@@ -62,14 +62,15 @@ Tracks links between inviters and invitees.
 - **`created_at`**: Timestamp.
 - **`metadata`** *(JSONField)*: Stores configuration.
     - Key `features`: List of feature strings.
+- **Methods**:
+    - `claim_bonus() -> bool`: Atomically marks `bonus_granted=True` and `bonus_granted_at` to now. Returns `True` if successful, `False` if already granted. Use this for idempotency in bonus logic.
 
 **Note**: Product does NOT contain price or quantity. These are defined in Offers.
 
 ### Offer (`billable_offers`)
 Marketing packages that bundle products.
 
-- **`sku`** *(CharField, PK)*: Commercial identifier.
-    - Prefixes: `off_` (base), `pack_` (bundle), `promo_` (sale).
+- **`sku`** *(CharField, PK)*: Commercial identifier. Stored in **uppercase (CAPS)**. Automatically normalized on save.
 - **`name`**: Display name (e.g., "Premium Bundle").
 - **`price`** / **`currency`**: Cost (EUR, USD, XTR, INTERNAL).
 - **`image`** / **`description`**: UI metadata.
@@ -131,7 +132,7 @@ Individual lines within an order.
 ### TrialHistory (`billable_trial_history`)
 Fraud prevention tool. **Does NOT enforce trial logic** — your application layer should check this before granting.
 
-- **`identity_hash`** *(CharField, indexed)*: SHA-256 hash of the user's external ID.
+- **`identity_hash`** *(CharField, indexed)*: SHA-256 hash of the user's external ID. The ID is normalized to **lowercase** before hashing for maximum compatibility.
 - **`identity_type`**: Type of ID hashed (e.g., `telegram`, `email`).
 - **`trial_plan_name`**: The specific trial name used.
 - **Methods**:
@@ -188,6 +189,8 @@ You can run the command multiple times with different fields and providers for t
 The API is built with **Django Ninja**.
 **Base URL**: `/api/v1/billing` (typical configuration).
 **Authentication**: Header `Authorization: Bearer <BILLABLE_API_TOKEN>`.
+
+**Normalization Note**: All endpoints are **case-insensitive** for `sku` and `product_key` inputs. The system automatically converts these fields to uppercase before processing.
 
 ### 1. Quota & Balance
 
