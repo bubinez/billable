@@ -192,6 +192,12 @@ class TestBillableAPI:
         data = res.json()
         user_id = data["user_id"]
         
+        # Verify username is created in correct format
+        user = await User.objects.aget(pk=user_id)
+        assert user.username == "billable_telegram_9999"
+        assert user.first_name == "Test"
+        assert user.last_name == ""
+        
         # Subsequent calls resolve automatically via external_id
         res_wallet = await api_client.get(f"/wallet?provider=telegram&external_id=9999")
         assert res_wallet.status_code == 200

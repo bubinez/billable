@@ -1,0 +1,117 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+    .report-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    .report-table th, .report-table td { padding: 10px; border: 1px solid var(--border-color); text-align: left; }
+    .report-table thead th { background: var(--darkened-bg); text-align: center; vertical-align: middle; }
+    .balance-header { background: var(--selected-bg); padding: 15px; border-radius: 4px; margin-bottom: 20px; border: 1px solid var(--border-color); }
+    .amount-column { text-align: right !important; font-family: monospace; font-size: 1.1em; width: 70px; }
+    .cost-column { text-align: right !important; font-family: monospace; color: #666; width: 90px; }
+    .amount-credit { color: green; font-weight: bold; }
+    .amount-debit { color: #ba2121; }
+    .doc-column { font-size: 0.95em; min-width: 150px; }
+    .balance-column { text-align: right !important; background: var(--selected-bg); width: 100px; }
+    .balance-column-bold { font-weight: bold; }
+    .totals-row { background: var(--darkened-bg); font-weight: bold; }
+    .batch-header-row { background: var(--selected-bg); font-weight: bold; }
+    .batch-header-row td:first-child { font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; <a href="{% url opts|admin_urlname:'change' customer.pk %}">{{ customer }}</a>
+&rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <div class="balance-header">
+        <h2 style="margin: 0 0 10px 0;">{{ product.name }}</h2>
+        <p style="margin: 0;">
+            <strong>{% translate "User" %}:</strong> {{ customer.get_full_name|default:customer.username }} (ID: {{ customer.id }})<br>
+            <strong>{% translate "Current balance" %}:</strong> <span style="font-size: 1.2em; color: var(--primary);">{{ totals.balance }}</span>
+        </p>
+    </div>
+
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th rowspan="2">{% translate "Document" %}</th>
+                <th rowspan="2">{% translate "Transaction" %}</th>
+                <th colspan="2">{% translate "Purchased" %}</th>
+                <th colspan="2">{% translate "Used" %}</th>
+                <th rowspan="2">{% translate "Balance" %}</th>
+            </tr>
+            <tr>
+                <th>{% translate "Qty" %}</th>
+                <th>{% translate "Amount" %}</th>
+                <th>{% translate "Qty" %}</th>
+                <th>{% translate "Amount" %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {# Totals row (top) #}
+            <tr class="totals-row">
+                <td>{% translate "TOTAL" %}</td>
+                <td></td>
+                <td class="amount-column amount-credit">+{{ totals.credit_qty }}</td>
+                <td class="cost-column">{{ totals.credit_cost|floatformat:2 }}</td>
+                <td class="amount-column amount-debit">-{{ totals.debit_qty }}</td>
+                <td class="cost-column">{{ totals.debit_cost|floatformat:2 }}</td>
+                <td class="balance-column">{{ totals.balance }}</td>
+            </tr>
+
+            {% for batch_group in batch_groups %}
+                {# Batch header row with totals #}
+                <tr class="batch-header-row">
+                    <td style="white-space: nowrap;">{{ batch_group.batch_header|safe }}</td>
+                    <td></td>
+                    <td class="amount-column amount-credit">+{{ batch_group.batch_totals.credit_qty }}</td>
+                    <td class="cost-column">{{ batch_group.batch_totals.credit_cost|floatformat:2 }}</td>
+                    <td class="amount-column amount-debit">-{{ batch_group.batch_totals.debit_qty }}</td>
+                    <td class="cost-column">{{ batch_group.batch_totals.debit_cost|floatformat:2 }}</td>
+                    <td class="balance-column balance-column-bold">{{ batch_group.batch_totals.balance }}</td>
+                </tr>
+                
+                {# Batch transaction rows #}
+                {% for row in batch_group.rows %}
+                <tr>
+                    <td class="doc-column" style="white-space: nowrap;">
+                        {{ row.date|date:"d.m.Y H:i" }}{% if row.doc_link %} {{ row.doc_link|safe }}{% endif %}
+                    </td>
+                    
+                    {# Transaction #}
+                    <td class="doc-column">
+                        {% if row.transaction_link %}
+                        {{ row.transaction_link|safe }}
+                        {% endif %}
+                    </td>
+                    
+                    {# Purchased #}
+                    <td class="amount-column amount-credit">{% if row.credit %}+{{ row.credit.qty }}{% endif %}</td>
+                    <td class="cost-column">{% if row.credit %}{{ row.credit.cost|floatformat:2 }}{% endif %}</td>
+                    
+                    {# Used #}
+                    <td class="amount-column amount-debit">{% if row.debit %}-{{ row.debit.qty }}{% endif %}</td>
+                    <td class="cost-column">{% if row.debit %}{{ row.debit.cost|floatformat:2 }}{% endif %}</td>
+                    
+                    {# Balance #}
+                    <td class="balance-column">{{ row.balance }}</td>
+                </tr>
+                {% endfor %}
+            {% empty %}
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 20px;">{% translate "No transactions for this product." %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

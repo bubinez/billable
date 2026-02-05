@@ -197,6 +197,39 @@ class TestBusinessLogicBoundaries:
         assert batch.remaining_quantity == 0
         assert batch.state == QuotaBatch.State.EXHAUSTED
 
+    def test_batch_becomes_inactive_when_exhausted_by_transaction(self, test_user, qty_product):
+        """
+        Test that when a transaction is created and batch quantity reaches zero,
+        the batch immediately becomes inactive (EXHAUSTED).
+        """
+        batch = QuotaBatch.objects.create(
+            user=test_user, product=qty_product, initial_quantity=5, remaining_quantity=5,
+            state=QuotaBatch.State.ACTIVE
+        )
+        
+        # Verify initial state
+        assert batch.state == QuotaBatch.State.ACTIVE
+        assert batch.remaining_quantity == 5
+        
+        # Consume all remaining quantity, which creates a transaction
+        res = TransactionService.consume_quota(test_user.id, "tokens", amount=5)
+        assert res["success"] is True
+        
+        # Refresh batch from database
+        batch.refresh_from_db()
+        
+        # Verify batch is exhausted and inactive
+        assert batch.remaining_quantity == 0
+        assert batch.state == QuotaBatch.State.EXHAUSTED
+        
+        # Verify transaction was created
+        transaction = Transaction.objects.filter(
+            quota_batch=batch,
+            direction=Transaction.Direction.DEBIT
+        ).first()
+        assert transaction is not None
+        assert transaction.amount == 5
+
 @pytest.mark.django_db
 class TestAuditRefund:
     def test_trace_to_order_item(self, test_user, basic_offer):

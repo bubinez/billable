@@ -173,12 +173,12 @@ class ProductAdmin(admin.ModelAdmin):
 
             if qb.order_item and qb.order_item.order_id:
                 order_url = reverse("admin:billable_order_change", args=[qb.order_item.order_id])
-                source_label = f'<a href="{order_url}">Заказ #{qb.order_item.order_id}</a>'
+                source_label = f'<a href="{order_url}">Order #{qb.order_item.order_id}</a>'
             elif qb.source_offer_id:
                 offer_url = reverse("admin:billable_offer_change", args=[qb.source_offer_id])
                 source_label = f'<a href="{offer_url}">{qb.source_offer.name}</a>'
             else:
-                source_label = _("Ручное начисление")
+                source_label = "Manual grant"
 
             user_url = reverse("admin:billable_customer_change", args=[qb.user_id]) if qb.user_id else "#"
             user_link = f'<a href="{user_url}">{qb.user_id}</a>'
@@ -196,13 +196,13 @@ class ProductAdmin(admin.ModelAdmin):
         sources_table = (
             "<table style='width:100%;border:1px solid var(--border-color);border-collapse:collapse;margin-bottom:1.5rem;'>"
             "<thead style='background:var(--darkened-bg);'><tr>"
-            "<th style='padding:8px;text-align:left;'>" + _("Батч") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Пользователь") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Источник (как появился)") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Тип операции") + "</th>"
-            "<th style='padding:8px;text-align:right;'>" + _("Кол-во") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Дата") + "</th></tr></thead><tbody>"
-            + "".join(rows_sources) if rows_sources else "<tr><td colspan='6' style='padding:8px;'>" + _("Нет данных") + "</td></tr>"
+            "<th style='padding:8px;text-align:left;'>" + _("Batch") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("User") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("Source (how it appeared)") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("Operation type") + "</th>"
+            "<th style='padding:8px;text-align:right;'>" + _("Qty") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("Date") + "</th></tr></thead><tbody>"
+            + "".join(rows_sources) if rows_sources else "<tr><td colspan='6' style='padding:8px;'>" + _("No data") + "</td></tr>"
             + "</tbody></table>"
         )
 
@@ -221,26 +221,26 @@ class ProductAdmin(admin.ModelAdmin):
             )
 
         debits_table = (
-            "<p><strong>" + _("Расход (списания)") + "</strong></p>"
+            "<p><strong>" + _("Spending (debits)") + "</strong></p>"
             "<table style='width:100%;border:1px solid var(--border-color);border-collapse:collapse;'>"
             "<thead style='background:var(--darkened-bg);'><tr>"
-            "<th style='padding:8px;text-align:left;'>" + _("Транзакция") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Пользователь") + "</th>"
-            "<th style='padding:8px;text-align:right;'>" + _("Списано") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Тип операции") + "</th>"
-            "<th style='padding:8px;text-align:left;'>" + _("Дата") + "</th></tr></thead><tbody>"
-            + "".join(rows_debit) if rows_debit else "<tr><td colspan='5' style='padding:8px;'>" + _("Нет списаний") + "</td></tr>"
+            "<th style='padding:8px;text-align:left;'>" + _("Transaction") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("User") + "</th>"
+            "<th style='padding:8px;text-align:right;'>" + _("Debited") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("Operation type") + "</th>"
+            "<th style='padding:8px;text-align:left;'>" + _("Date") + "</th></tr></thead><tbody>"
+            + "".join(rows_debit) if rows_debit else "<tr><td colspan='5' style='padding:8px;'>" + _("No debits") + "</td></tr>"
             + "</tbody></table>"
         )
 
         report_html = (
-            "<p><strong>" + _("Появление (зачисления)") + "</strong></p>"
+            "<p><strong>" + _("Inflows (credits)") + "</strong></p>"
             + sources_table
             + debits_table
         )
         return mark_safe(report_html)
 
-    product_report.short_description = _("Отчёт по продукту")
+    product_report.short_description = _("Product report")
 
     fieldsets = (
         (_("📦 Technical DNA (The Product)"), {
@@ -267,11 +267,11 @@ class ProductAdmin(admin.ModelAdmin):
         (_("🔗 CURRENT SALE (Existing Placements)"), {
             "fields": ("active_offers",),
         }),
-        (_("📊 Отчёт по продукту: как появился и как потратился"), {
+        (_("📊 Product report: inflows and spending"), {
             "fields": ("product_report",),
             "description": _(
-                "Появление — батчи квот и источник (заказ, оффер, ручное начисление). "
-                "Расход — списания по транзакциям."
+                "Inflows — quota batches and source (order, offer, manual grant). "
+                "Spending — debits via transactions."
             ),
         }),
         (_("🚀 DEPLOYMENT: Create a NEW Price Tag (Offer)"), {
@@ -387,12 +387,72 @@ class QuotaBatchAdmin(admin.ModelAdmin):
 class TransactionAdmin(admin.ModelAdmin):
     """Admin configuration for Transaction."""
 
-    list_display = ("id", "user", "quota_batch", "amount", "direction", "action_type", "created_at")
-    list_filter = ("direction", "action_type", "created_at")
+    list_display = ("id", "user", "quota_batch", "amount_display", "direction", "action_type", "document_link", "created_at")
+    list_filter = ("direction", "action_type", "created_at", "quota_batch__product")
     search_fields = ("user_id", "quota_batch__id", "id")
-    readonly_fields = ("id", "created_at")
+    readonly_fields = ("id", "created_at", "document_link", "balance_after")
     raw_id_fields = ("user", "quota_batch")
     date_hierarchy = "created_at"
+
+    def amount_display(self, obj):
+        color = "green" if obj.direction == Transaction.Direction.CREDIT else "red"
+        prefix = "+" if obj.direction == Transaction.Direction.CREDIT else "-"
+        return mark_safe(f'<span style="color: {color}; font-weight: bold;">{prefix}{obj.amount}</span>')
+    amount_display.short_description = _("Amount")
+
+    def balance_after(self, obj):
+        """
+        Placeholder for balance calculation. 
+        In a real scenario, this would compute the running balance for the product.
+        """
+        return "-"
+    balance_after.short_description = _("Balance")
+
+    def document_link(self, obj):
+        """Generates readable anchors for related documents."""
+        if obj.direction == Transaction.Direction.CREDIT:
+            # Try to find Order
+            if obj.quota_batch and obj.quota_batch.order_item and obj.quota_batch.order_item.order:
+                order = obj.quota_batch.order_item.order
+                url = reverse("admin:billable_order_change", args=[order.pk])
+                return mark_safe(f'<a href="{url}">Order #{order.pk} from {order.created_at.strftime("%d.%m.%Y")}</a>')
+            
+            if obj.action_type == "referral_bonus":
+                return "Bonus: Referral"
+            
+            if obj.quota_batch:
+                url = reverse("admin:billable_quotabatch_change", args=[obj.quota_batch.pk])
+                return mark_safe(f'<a href="{url}">Batch #{str(obj.quota_batch.pk)[-12:]}</a>')
+            
+            # No batch, no order - just return empty (transaction link will be shown separately)
+            return ""
+        else:
+            # Debit - check related_object
+            rel_obj = obj.related_object
+            
+            if rel_obj:
+                try:
+                    # Try to get a nice name
+                    name = str(rel_obj)
+                    if hasattr(rel_obj, 'name'): name = rel_obj.name
+                    elif hasattr(rel_obj, 'title'): name = rel_obj.title
+                    
+                    # Try to get admin URL
+                    content_type = obj.content_type
+                    url = reverse(f"admin:{content_type.app_label}_{content_type.model}_change", args=[obj.object_id])
+                    
+                    prefix = ""
+                    if obj.action_type == "usage": prefix = "Usage"
+                    elif obj.action_type == "refund": prefix = "Refund"
+                    
+                    return mark_safe(f'<a href="{url}">{prefix}: {name}</a>')
+                except:
+                    pass
+            
+            # Fallback: no related_object - return empty (batch link shown in batch header row)
+            return ""
+    
+    document_link.short_description = _("Document")
 
 
 class OrderItemInline(admin.TabularInline):
@@ -415,16 +475,6 @@ class OrderAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     raw_id_fields = ("user",)
     inlines = (OrderItemInline,)
-
-
-@admin.register(OrderItem)
-class OrderItemAdmin(admin.ModelAdmin):
-    """Admin configuration for OrderItem."""
-
-    list_display = ("id", "order", "offer", "quantity", "price")
-    list_filter = ("order__status",)
-    search_fields = ("order__id", "offer__name")
-    raw_id_fields = ("order", "offer")
 
 
 @admin.register(TrialHistory)
@@ -516,17 +566,404 @@ class CustomerAdmin(admin.ModelAdmin):
     """
     list_display = ("username", "email", "get_external_ids", "active_quotas_count")
     search_fields = ("username", "email", "first_name", "last_name")
-    readonly_fields = ("technical_profile_link", "history_link")
-    inlines = (ActiveQuotaBatchInline,)
+    readonly_fields = ("technical_profile_link", "history_link", "products_list_view")
+    inlines = ()
+
+    def products_list_view(self, obj):
+        """
+        Renders Level 1 view: List of unique products (Active and History).
+        """
+        if not obj or not obj.pk:
+            return _("Save customer first.")
+
+        from django.utils import timezone
+        now = timezone.now()
+
+        # Get all products ever associated with the user
+        all_batches = obj.quota_batches.select_related("product").all()
+        
+        products_data = {}
+        for qb in all_batches:
+            p_id = qb.product_id
+            if p_id not in products_data:
+                products_data[p_id] = {
+                    "obj": qb.product,
+                    "is_active": False,
+                    "remaining": 0,
+                    "expires": None
+                }
+            
+            # Logic for active status
+            is_qb_active = (
+                qb.state == QuotaBatch.State.ACTIVE and 
+                (qb.expires_at is None or qb.expires_at > now) and
+                qb.remaining_quantity > 0
+            )
+            
+            if is_qb_active:
+                products_data[p_id]["is_active"] = True
+                products_data[p_id]["remaining"] += qb.remaining_quantity
+                if qb.expires_at:
+                    if not products_data[p_id]["expires"] or qb.expires_at > products_data[p_id]["expires"]:
+                        products_data[p_id]["expires"] = qb.expires_at
+
+        active_rows = []
+        history_rows = []
+
+        for p_id, data in products_data.items():
+            product = data["obj"]
+            # Level 2 link: Custom report view
+            report_url = reverse("admin:billable_customer_product_report", args=[obj.id, p_id])
+            
+            row = (
+                f'<tr style="border-bottom: 1px solid var(--border-color);">'
+                f'<td style="padding: 8px;">{product.name}</td>'
+                f'<td style="padding: 8px; text-align: center;">{data["remaining"] if data["is_active"] else "-"}</td>'
+                f'<td style="padding: 8px; text-align: center;">{data["expires"].strftime("%d.%m.%Y") if data["expires"] else "-"}</td>'
+                f'<td style="padding: 8px; text-align: right;"><a href="{report_url}" class="button" style="padding: 2px 10px; font-size: 11px;">{_("Details")}</a></td>'
+                f'</tr>'
+            )
+            
+            if data["is_active"]:
+                active_rows.append(row)
+            else:
+                history_rows.append(row)
+
+        def build_table(rows, title):
+            if not rows:
+                return f"<p style='color: #666;'>{_('No data')}</p>"
+            return (
+                f'<h4>{title}</h4>'
+                f'<table style="width:100%; border: 1px solid var(--border-color); border-collapse: collapse; margin-bottom: 20px;">'
+                f'<thead style="background: var(--darkened-bg);">'
+                f'<tr>'
+                f'<th style="padding: 8px; text-align: left;">{_("Product")}</th>'
+                f'<th style="padding: 8px; text-align: center;">{_("Balance")}</th>'
+                f'<th style="padding: 8px; text-align: center;">{_("Expiry")}</th>'
+                f'<th style="padding: 8px; text-align: right;">{_("Action")}</th>'
+                f'</tr></thead><tbody>'
+                f'{"".join(rows)}'
+                f'</tbody></table>'
+            )
+
+        html = build_table(active_rows, _("Active products"))
+        
+        if history_rows:
+            html += (
+                f'<details style="margin-top: 10px; border: 1px solid var(--border-color); padding: 10px; border-radius: 4px;">'
+                f'<summary style="cursor: pointer; font-weight: bold;">{_("History (Past products)")}</summary>'
+                f'{build_table(history_rows, "")}'
+                f'</details>'
+            )
+        
+        return mark_safe(html)
+    products_list_view.short_description = _("Products and subscriptions")
 
     fieldsets = (
         (None, {
-            "fields": ("username", "email", "first_name", "last_name", "is_active")
+            "fields": ("user_info_compact", "external_identities_links")
+        }),
+        (_("Products and subscriptions (Read-only)"), {
+            "fields": ("products_list_view",),
         }),
         (_("🔗 Quick Links"), {
             "fields": ("technical_profile_link", "history_link"),
         }),
     )
+
+    def user_info_compact(self, obj):
+        """Displays user info in a compact, read-only format."""
+        return mark_safe(
+            f'<div style="font-size: 1.1em; font-weight: bold;">'
+            f'{obj.get_full_name() or obj.username} '
+            f'<span style="font-weight: normal; color: #666;">({obj.email})</span>'
+            f'</div>'
+        )
+    user_info_compact.short_description = _("User Profile")
+
+    def external_identities_links(self, obj):
+        """Displays external identities as clickable tags."""
+        identities = obj.billable_external_identities.all()
+        if not identities:
+            return "-"
+        
+        links = []
+        for identity in identities:
+            url = reverse("admin:billable_externalidentity_change", args=[identity.pk])
+            links.append(
+                f'<a href="{url}" style="display: inline-block; padding: 2px 8px; margin: 2px; '
+                f'background: #79aec8; color: white; border-radius: 10px; text-decoration: none; font-size: 0.9em;">'
+                f'{identity.provider}:{identity.external_id}</a>'
+            )
+        return mark_safe(" ".join(links))
+    external_identities_links.short_description = _("Identities")
+
+    def get_urls(self):
+        """Add custom report URL."""
+        from django.urls import path
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<path:object_id>/product-report/<int:product_id>/',
+                self.admin_site.admin_view(self.product_usage_report_view),
+                name='billable_customer_product_report',
+            ),
+        ]
+        return custom_urls + urls
+
+    def product_usage_report_view(self, request, object_id, product_id):
+        """
+        Level 2: Detailed transaction report for a specific product.
+        Hierarchical by QuotaBatch groups.
+        """
+        from django.shortcuts import get_object_or_404
+        from django.template.response import TemplateResponse
+        from django.db.models import Sum
+        from django.urls import reverse
+        from collections import defaultdict
+        
+        customer = get_object_or_404(Customer, pk=object_id)
+        product = get_object_or_404(Product, pk=product_id)
+        
+        # Get all transactions for this product and user
+        transactions = Transaction.objects.filter(
+            user=customer,
+            quota_batch__product=product
+        ).select_related(
+            "quota_batch",
+            "content_type",
+            "quota_batch__order_item",
+            "quota_batch__order_item__order",
+            "quota_batch__source_offer"
+        )
+        
+        # Group transactions by quota_batch
+        transactions_by_batch = defaultdict(list)
+        for tx in transactions:
+            batch_id = tx.quota_batch_id if tx.quota_batch else None
+            transactions_by_batch[batch_id].append(tx)
+        
+        # Get all unique batches with their metadata
+        batch_ids = [bid for bid in transactions_by_batch.keys() if bid is not None]
+        batches = QuotaBatch.objects.filter(
+            id__in=batch_ids
+        ).select_related(
+            "order_item__order",
+            "source_offer"
+        )
+        
+        batches_dict = {batch.id: batch for batch in batches}
+        
+        # Prepare all rows with batch_id for grouping
+        all_rows = []
+        total_credit_qty = 0
+        total_debit_qty = 0
+        total_credit_cost = 0
+        total_debit_cost = 0
+        
+        # Process all transactions and prepare rows
+        for batch_id, batch_txs in transactions_by_batch.items():
+            if batch_id is None:
+                # Transactions without batch - skip for now or handle separately
+                continue
+                
+            batch = batches_dict.get(batch_id)
+            if not batch:
+                continue
+            
+            batch_credit_qty = 0
+            batch_debit_qty = 0
+            batch_credit_cost = 0
+            batch_debit_cost = 0
+            
+            for tx in batch_txs:
+                # Determine the actual business date for the transaction
+                tx_date = tx.created_at
+                if batch.order_item and batch.order_item.order:
+                    order = batch.order_item.order
+                    if order.paid_at:
+                        tx_date = order.paid_at
+
+                # Calculate cost if it's an order
+                cost = 0
+                if batch.order_item:
+                    item = batch.order_item
+                    qb_initial = batch.initial_quantity
+                    if qb_initial > 0:
+                        cost = (item.price / qb_initial) * tx.amount
+
+                if tx.direction == Transaction.Direction.CREDIT:
+                    batch_credit_qty += tx.amount
+                    batch_credit_cost += cost
+                    credit = {"qty": tx.amount, "cost": cost}
+                    debit = None
+                else:
+                    batch_debit_qty += tx.amount
+                    batch_debit_cost += cost
+                    credit = None
+                    debit = {"qty": tx.amount, "cost": cost}
+                
+                doc_link = self.admin_site._registry[Transaction].document_link(tx)
+                
+                # Create transaction link (last 12 chars of GUID)
+                tx_url = reverse("admin:billable_transaction_change", args=[tx.pk])
+                transaction_link = mark_safe(f'<a href="{tx_url}">#{str(tx.pk)[-12:]}</a>')
+                
+                all_rows.append({
+                    "batch_id": batch_id,
+                    "date": tx_date,
+                    "credit": credit,
+                    "debit": debit,
+                    "doc_link": doc_link,
+                    "transaction_link": transaction_link,
+                    "batch_totals": {
+                        "credit_qty": batch_credit_qty,
+                        "debit_qty": batch_debit_qty,
+                        "credit_cost": batch_credit_cost,
+                        "debit_cost": batch_debit_cost,
+                    }
+                })
+            
+            # Add to totals
+            total_credit_qty += batch_credit_qty
+            total_debit_qty += batch_debit_qty
+            total_credit_cost += batch_credit_cost
+            total_debit_cost += batch_debit_cost
+        
+        # Sort all rows by business date/time ascending (oldest first)
+        all_rows.sort(key=lambda r: (r["date"], 0 if r["debit"] else 1))
+        
+        # Calculate running balance in chronological order (across all batches)
+        running_balance = 0
+        for row in all_rows:
+            if row["credit"]:
+                running_balance += row["credit"]["qty"]
+            else:
+                running_balance -= row["debit"]["qty"]
+            row["balance"] = running_balance
+        
+        # Group rows back by batch BEFORE reversing
+        rows_by_batch = defaultdict(list)
+        for row in all_rows:
+            batch_id = row.pop("batch_id")
+            batch_totals = row.pop("batch_totals")
+            rows_by_batch[batch_id].append(row)
+        
+        # Prepare batch groups
+        batch_groups = []
+        for batch_id, batch_rows in rows_by_batch.items():
+            batch = batches_dict.get(batch_id)
+            if not batch:
+                continue
+            
+            # Sort rows within batch: first DEBIT (by date/time desc), then CREDIT (by date/time desc)
+            # Debits appear first (above), credits appear after (below debits)
+            # Both groups sorted by date/time descending (newest first within each group)
+            # This matches the display order: newest transactions appear first
+            from datetime import datetime
+            batch_rows_sorted = sorted(
+                batch_rows,
+                key=lambda r: (
+                    1 if r["credit"] else 0,  # Debits first (0), credits second (1)
+                    r["date"] if isinstance(r["date"], datetime) else r["date"]  # For datetime comparison
+                ),
+                reverse=True  # Reverse to get descending order (newest first)
+            )
+            # But we need DEBIT first, so reverse only the date part, not the type part
+            # So we sort by (type, -date) instead
+            batch_rows_sorted = sorted(
+                batch_rows,
+                key=lambda r: (
+                    1 if r["credit"] else 0,  # Debits first (0), credits second (1)
+                    r["date"]  # Date for comparison
+                ),
+                reverse=False  # Normal order for type (DEBIT=0 first), but we'll handle date separately
+            )
+            # Now reverse date order within each type group
+            # Group by type and sort each group by date descending
+            debits = [r for r in batch_rows_sorted if r["debit"]]
+            credits = [r for r in batch_rows_sorted if r["credit"]]
+            debits.sort(key=lambda r: r["date"], reverse=True)  # Newest first
+            credits.sort(key=lambda r: r["date"], reverse=True)  # Newest first
+            batch_rows_sorted = debits + credits  # DEBIT first, then CREDIT
+            
+            # Recalculate balance within batch from bottom to top (matching display order)
+            # Start from the last row (bottom) and go up
+            batch_balance = 0
+            for row in reversed(batch_rows_sorted):
+                if row["credit"]:
+                    batch_balance += row["credit"]["qty"]
+                else:
+                    batch_balance -= row["debit"]["qty"]
+                row["balance"] = batch_balance
+            
+            # Calculate batch totals from rows
+            batch_credit_qty = sum(r["credit"]["qty"] for r in batch_rows_sorted if r["credit"])
+            batch_debit_qty = sum(r["debit"]["qty"] for r in batch_rows_sorted if r["debit"])
+            batch_credit_cost = sum(r["credit"]["cost"] for r in batch_rows_sorted if r["credit"])
+            batch_debit_cost = sum(r["debit"]["cost"] for r in batch_rows_sorted if r["debit"])
+            
+            # Balance is already calculated in the loop above, use the final value
+            # This is the balance after all transactions in the batch (shown in the header)
+            
+            # Form batch header text with link to batch
+            batch_date = batch.created_at.strftime("%d.%m.%Y")
+            source_text = ""
+            if batch.order_item and batch.order_item.order:
+                order = batch.order_item.order
+                source_text = f"Order #{order.id}"
+            elif batch.source_offer:
+                source_text = batch.source_offer.name
+            else:
+                source_text = "Manual grant"
+            
+            batch_url = reverse("admin:billable_quotabatch_change", args=[batch.id])
+            batch_header = mark_safe(
+                f'<a href="{batch_url}">{batch_date} {source_text}</a> — {batch.state}'
+            )
+            
+            batch_groups.append({
+                "batch": batch,
+                "batch_header": batch_header,
+                "rows": batch_rows_sorted,
+                "batch_totals": {
+                    "credit_qty": batch_credit_qty,
+                    "debit_qty": batch_debit_qty,
+                    "credit_cost": batch_credit_cost,
+                    "debit_cost": batch_debit_cost,
+                    "balance": batch_balance,
+                }
+            })
+        
+        # Sort batches by created_at desc (newest first)
+        batch_groups.sort(key=lambda bg: bg["batch"].created_at, reverse=True)
+        
+        # Final balance is the running balance from the last transaction
+        final_balance = running_balance
+        
+        totals = {
+            "credit_qty": total_credit_qty,
+            "debit_qty": total_debit_qty,
+            "credit_cost": total_credit_cost,
+            "debit_cost": total_debit_cost,
+            "balance": final_balance,
+        }
+        
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f'{_("Product report")} "{product.name}"',
+            "customer": customer,
+            "product": product,
+            "batch_groups": batch_groups,
+            "totals": totals,
+            "opts": self.model._meta,
+        }
+        
+        return TemplateResponse(request, "admin/billable/customer/product_report.html", context)
+
+    def get_readonly_fields(self, request, obj=None):
+        """Make all base user fields readonly in this view."""
+        return self.readonly_fields + ("username", "email", "first_name", "last_name", "user_info_compact", "external_identities_links")
 
     def get_queryset(self, request):
         """
@@ -553,9 +990,23 @@ class CustomerAdmin(admin.ModelAdmin):
     get_external_ids.short_description = _("External Identities")
 
     def active_quotas_count(self, obj):
-        """Quick counter for the list view."""
-        return obj.quota_batches.filter(state=QuotaBatch.State.ACTIVE).count()
-    active_quotas_count.short_description = _("Active Products")
+        """Sum of remaining quantity across active, non-expired quota batches."""
+        from django.utils import timezone
+        from django.db.models import Sum
+        now = timezone.now()
+        result = (
+            obj.quota_batches.filter(
+                state=QuotaBatch.State.ACTIVE,
+                remaining_quantity__gt=0
+            )
+            .filter(
+                Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+            )
+            .aggregate(total=Sum("remaining_quantity"))
+        )
+        total = result["total"] or 0
+        return total if total else "-"
+    active_quotas_count.short_description = _("Active Products (remaining)")
 
     def history_link(self, obj):
         """Link to all quota batches (active and archive) for this user (16a)."""
