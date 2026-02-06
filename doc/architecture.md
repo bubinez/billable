@@ -19,8 +19,10 @@ It adheres to the **"Detachable"** principle: the module does not contain the bu
 *   **ExternalIdentity mapping**: The module stores external identifiers in `ExternalIdentity` and can optionally link them to `settings.AUTH_USER_MODEL`.
     *   `provider` is a string (e.g., `telegram`, `max`, `n8n`). If not provided, it defaults to `"default"`.
     *   Uniqueness is enforced for `(provider, external_id)`.
-    *   **Resolution**: Use `ExternalIdentity.get_user_by_identity` (or its async version `aget_user_by_identity`) to resolve an external ID to a local `User` object.
-*   **Identify flow**: Orchestrators should call `POST /identify` at the start of a flow. The module always ensures a local `User` exists (creates and links if missing) and returns `user_id` for subsequent billing calls.
+    *   **Resolution**: 
+        *   **Lookup**: Use `ExternalIdentity.aget_user_by_identity` to resolve an external ID to an existing `User`. Used by all **GET** (read) API endpoints. Returns 404 if the user does not exist.
+        *   **Resolve or Create**: Use `aresolve_user_id_by_identity` (utility in `api.py`) to ensure a user exists. Used by all **POST** (write) API endpoints (Orders, Consumptions, Exchanges).
+*   **Identify flow**: Orchestrators can call `POST /identify` at the start of a flow to explicitly ensure a local `User` exists. However, for convenience, all **POST** endpoints (like creating an order or consuming quota) will automatically perform identification and create the user if missing.
 *   **Migration of existing identities**: If identifiers are stored in fields on the User model (e.g. `telegram_id`, `chat_id`, `stripe_id`), the management command `migrate_identities` creates corresponding `ExternalIdentity` records in bulk. The command is idempotent and can be run multiple times for different field/provider pairs. See [Reference — Management Commands](reference.md#management-commands).
 *   **Abuse Protection**: The system provides `TrialHistory` model with SHA-256 identity hashing as a **tool** for fraud prevention. User identifiers are normalized to **lowercase** before hashing to ensure consistency across different input sources.
 *   **Quota Check**: Before offering services, the system checks the user's quota balance by `product_key`.

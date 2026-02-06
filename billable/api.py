@@ -82,11 +82,11 @@ class APIKeyAuth(HttpBearer):
 router = Router(tags=["billing"], auth=APIKeyAuth())
 
 
-async def _aresolve_external_to_user_id(provider: str, external_id: str) -> int:
-    """Resolve (provider, external_id) to local billing user_id.
+async def aresolve_user_id_by_identity(provider: str, external_id: str) -> int:
+    """Resolve (provider, external_id) to local billing user_id (create if missing).
 
     Creates ExternalIdentity and User if missing. Same semantics as POST /identify.
-    Used internally when an endpoint accepts external_id + provider instead of user_id.
+    Used internally when a POST/write endpoint accepts external_id + provider.
 
     Args:
         provider: Identity provider (e.g. telegram, n8n). Used for ExternalIdentity lookup.
@@ -259,10 +259,9 @@ async def aconsume_user_quota(request, data: QuotaConsumeSchema):
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and data.external_id:
-        user = await ExternalIdentity.aget_user_by_identity(
-            external_id=data.external_id, provider=provider_value
+        resolved_user_id = await aresolve_user_id_by_identity(
+            provider=provider_value, external_id=data.external_id
         )
-        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}
@@ -297,16 +296,17 @@ async def ademo_grant_trial(request, data: TrialGrantSchema):
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and resolved_external_id:
-        user = await ExternalIdentity.aget_user_by_identity(
-            external_id=resolved_external_id, provider=provider_value
+        resolved_user_id = await aresolve_user_id_by_identity(
+            provider=provider_value, external_id=resolved_external_id
         )
-        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}
 
     # 1. Fraud Prevention: Check if trial was already used
-    identities = {provider_value: resolved_external_id} if resolved_external_id else None
+    identities = data.identities if data.identities else (
+        {provider_value: resolved_external_id} if resolved_external_id else None
+    )
     if await TrialHistory.ahas_used_trial(identities=identities):
         return 400, {
             "success": False, 
@@ -403,7 +403,7 @@ async def alist_catalog(request):
     return [by_sku[normalized_sku] for normalized_sku in normalized_sku_list if normalized_sku in by_sku]
 
 
-@router.get("/wallet", response=WalletBalanceSchema)
+@router.get("/wallet", response={200: WalletBalanceSchema, 404: CommonResponse})
 async def aget_wallet(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
     """Get aggregated wallet balance: user_id and map of product_key -> total remaining quantity.
 
@@ -413,10 +413,13 @@ async def aget_wallet(request, user_id: int | None = None, external_id: str | No
     provider_value = provider or "default"
     uid = user_id
     if not uid and external_id:
-        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
+        )
+        uid = user.id if user else None
     
     if not uid:
-         return 400, {"success": False, "message": "User not identified"}
+         return 404, {"success": False, "message": "User not found"}
 
     balances = {}
     async for batch in QuotaBatch.objects.filter(
@@ -429,7 +432,7 @@ async def aget_wallet(request, user_id: int | None = None, external_id: str | No
     return {"user_id": uid, "balances": balances}
 
 
-@router.get("/wallet/batches", response=List[QuotaBatchSchema])
+@router.get("/wallet/batches", response={200: List[QuotaBatchSchema], 404: CommonResponse})
 async def aget_wallet_batches(request, user_id: int | None = None, external_id: str | None = None, provider: str | None = None):
     """List detailed active quota batches for the user (wallet entries with state and expiry).
 
@@ -439,10 +442,13 @@ async def aget_wallet_batches(request, user_id: int | None = None, external_id: 
     provider_value = provider or "default"
     uid = user_id
     if not uid and external_id:
-        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
+        )
+        uid = user.id if user else None
     
     if not uid:
-         return 400, {"success": False, "message": "User not identified"}
+         return 404, {"success": False, "message": "User not found"}
 
     batches = []
     async for batch in QuotaBatch.objects.filter(
@@ -453,7 +459,7 @@ async def aget_wallet_batches(request, user_id: int | None = None, external_id: 
     return batches
 
 
-@router.get("/wallet/transactions", response=List[TransactionSchema])
+@router.get("/wallet/transactions", response={200: List[TransactionSchema], 404: CommonResponse})
 async def aget_wallet_transactions(
     request, 
     user_id: int | None = None, 
@@ -472,10 +478,13 @@ async def aget_wallet_transactions(
     provider_value = provider or "default"
     uid = user_id
     if not uid and external_id:
-        uid = await _aresolve_external_to_user_id(provider_value, external_id)
+        user = await ExternalIdentity.aget_user_by_identity(
+            external_id=external_id, provider=provider_value
+        )
+        uid = user.id if user else None
     
     if not uid:
-         return 400, {"success": False, "message": "User not identified"}
+         return 404, {"success": False, "message": "User not found"}
 
     txs = []
     qs = Transaction.objects.filter(user_id=uid)
@@ -506,10 +515,9 @@ async def aexchange_offer(request, data: ExchangeSchema):
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and data.external_id:
-        user = await ExternalIdentity.aget_user_by_identity(
-            external_id=data.external_id, provider=provider_value
+        resolved_user_id = await aresolve_user_id_by_identity(
+            provider=provider_value, external_id=data.external_id
         )
-        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}
@@ -542,10 +550,9 @@ async def acreate_order(request, data: OrderCreateSchema):
     resolved_user_id = data.user_id
 
     if resolved_user_id is None and data.external_id:
-        user = await ExternalIdentity.aget_user_by_identity(
-            external_id=data.external_id, provider=provider_value
+        resolved_user_id = await aresolve_user_id_by_identity(
+            provider=provider_value, external_id=data.external_id
         )
-        resolved_user_id = user.id if user else None
 
     if resolved_user_id is None:
         return 400, {"success": False, "message": "user_id is required"}

@@ -237,15 +237,17 @@ If you are using **n8n** or a frontend:
 
 **Purchase Flow (Real Money):**
 1.  **Create Order**: `POST /api/v1/billing/orders`
+    *Supports `external_id` + `provider`. Automatically creates a user if missing.*
 2.  **Confirm Payment**: `POST /api/v1/billing/orders/{order_id}/confirm`
     *Triggered by your payment webhook. This grants products via `TransactionService.grant_offer(source="purchase")`.*
 
 **Exchange Flow (Internal Currency):**
 1.  **Exchange**: `POST /api/v1/billing/exchange`
-    *Atomically spends internal currency and grants the target offer.*
+    *Atomically spends internal currency and grants the target offer. Supports `external_id` + `provider` (creates user if missing).*
 
 **Get Balance:**
 `GET /api/v1/billing/wallet` (Headers: `Authorization: Bearer <TOKEN>`)
+*Lookup only: returns 404 if the external identity is not registered (no auto-creation).*
 
 **Catalog:**
 - `GET /api/v1/billing/catalog` — list all active offers (or filter by `?sku=...&sku=...` for bulk lookup)

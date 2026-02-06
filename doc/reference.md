@@ -209,6 +209,25 @@ List **active quota batches**, optionally filtered by `product_key`.
   - `external_id` *(str, optional)*: External identifier.
   - `provider` *(str, optional)*: Identity provider.
 - **Response (200)**: `List[ActiveBatch]`
+- **Response (404)**: If `external_id` is provided but user does not exist.
+
+#### `GET /wallet`
+Get aggregated balance for all active products.
+- **Query params**: `user_id` or (`external_id` + `provider`).
+- **Response (200)**: `{"user_id": int, "balances": {"PRODUCT_KEY": int, ...}}`
+- **Response (404)**: If user not found (lookup only).
+
+#### `GET /wallet/batches`
+Detailed list of all active quota batches (with expires_at).
+- **Query params**: `user_id` or (`external_id` + `provider`).
+- **Response (200)**: `List[QuotaBatchSchema]`
+- **Response (404)**: If user not found (lookup only).
+
+#### `GET /wallet/transactions`
+Transaction history (ledger) for the user.
+- **Query params**: `user_id` or (`external_id` + `provider`), `product_key`, `action_type`, `date_from`.
+- **Response (200)**: `List[TransactionSchema]` (up to 100 recent items).
+- **Response (404)**: If user not found (lookup only).
 
 #### `POST /identify`
 Identify an external identity and ensure a local `User` exists (create and link if missing).
@@ -228,6 +247,12 @@ Identify an external identity and ensure a local `User` exists (create and link 
   - If `provider` is omitted, `"default"` is used.
   - User is always created or resolved; the response always includes `user_id`.
 
+#### `POST /wallet/consume`
+Consume quota for a specific product (admin / server-to-server).
+- **Body**: `user_id` or (`external_id` + `provider`), `product_key`, `action_type`, `action_id`, `idempotency_key`.
+- **Note**: Automatically creates a local `User` if missing.
+- **Response (200)**: `{"success": true, ...}`
+
 #### `POST /demo/trial-grant`
 (Demo/Reference implementation) Grant a trial offer with abuse protection.
 - **Body**:
@@ -239,6 +264,7 @@ Identify an external identity and ensure a local `User` exists (create and link 
   ```
 - **Notes**: 
   - Uses `TrialHistory` to prevent double-granting. 
+  - Automatically creates a local `User` if `external_id` + `provider` is used and user is missing.
   - This is a reference implementation; move logic to `PromotionService` in production.
 
 ### 2. Commercial Flows
@@ -264,6 +290,7 @@ Exchange internal currency for an offer (spend `product_key`, grant `sku`).
   }
   ```
 - **Notes**: `sku` is required. Either `user_id` or (`external_id` + `provider`) must be present. If `provider` is omitted when using external identity, `"default"` is used.
+- **Auto-creation**: If a new `external_id` + `provider` is used, the system automatically creates a local `User` before processing the exchange.
 
 ### 3. Orders
 
@@ -278,6 +305,7 @@ Create a new order (financial intent).
     ]
   }
   ```
+- **Auto-creation**: If a new `external_id` + `provider` is used (instead of `user_id`), the system automatically creates a local `User`.
 
 #### `POST /orders/{order_id}/confirm`
 Confirm payment for an order and grant products.
@@ -317,6 +345,7 @@ Referral statistics (e.g. count of invited users) for the referrer.
   - `external_id` *(str, optional)*: External identifier (used if `user_id` is not provided).
   - `provider` *(str, optional)*: Identity provider for `external_id`. Defaults to `"default"`.
 - **Response (200)**: `{"success": true, "message": "Stats retrieved", "data": {"count": N}}`
+- **Response (404)**: If `external_id` is provided but user does not exist.
 
 #### `POST /customers/merge`
 Merge two customers: move all data from `source_user` to `target_user`.

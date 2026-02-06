@@ -387,6 +387,67 @@ class TestBillableAPI:
 
     # --- Trial Edge Case (Double usage with different providers) ---
 
+    async def test_trial_grant_creates_trial_history_record(self, api_client, test_user, tg_identity):
+        """After trial grant with external_id, a TrialHistory record is created."""
+        offer = await Offer.objects.acreate(
+            sku="TRIAL_SKU",
+            name="Trial Plan",
+            price=0,
+            currency="USD",
+            is_active=True,
+            metadata={"is_trial": True},
+        )
+        product = await Product.objects.acreate(
+            product_key="TRIAL_PRODUCT", name="Trial Product", is_active=True
+        )
+        await OfferItem.objects.acreate(offer=offer, product=product, quantity=10)
+
+        payload = {
+            "user_id": test_user.id,
+            "provider": "telegram",
+            "external_id": "12345678",
+            "sku": "TRIAL_SKU",
+        }
+        res = await api_client.post("/demo/trial-grant", json=payload)
+        assert res.status_code == 200
+
+        count = await TrialHistory.objects.filter(
+            identity_type="telegram",
+            identity_hash=TrialHistory.generate_identity_hash("12345678"),
+        ).acount()
+        assert count == 1, "Expected one TrialHistory record after trial grant"
+
+    async def test_trial_grant_with_identities_creates_trial_history_record(
+        self, api_client, test_user
+    ):
+        """Trial grant with user_id + identities (no external_id) creates TrialHistory record."""
+        offer = await Offer.objects.acreate(
+            sku="TRIAL_GEM",
+            name="Trial Gem",
+            price=0,
+            currency="USD",
+            is_active=True,
+            metadata={"is_trial": True},
+        )
+        product = await Product.objects.acreate(
+            product_key="GEM", name="Gem", is_active=True
+        )
+        await OfferItem.objects.acreate(offer=offer, product=product, quantity=5)
+
+        payload = {
+            "user_id": test_user.id,
+            "sku": "TRIAL_GEM",
+            "identities": {"telegram": 5454776146},
+        }
+        res = await api_client.post("/demo/trial-grant", json=payload)
+        assert res.status_code == 200
+
+        count = await TrialHistory.objects.filter(
+            identity_type="telegram",
+            identity_hash=TrialHistory.generate_identity_hash(5454776146),
+        ).acount()
+        assert count == 1, "Expected one TrialHistory record when passing identities"
+
     async def test_trial_fraud_prevention_robust(self, api_client, test_user):
         # Trial offer
         offer = await Offer.objects.acreate(

@@ -205,6 +205,17 @@ class OrderCreateSchema(BaseModel):
     items: list[dict[str, Any]] = Field(..., description="List of {sku: str, quantity: int}. SKU is automatically normalized to uppercase. At least one item required.")
     metadata: dict[str, Any] | None = Field(None, description="Optional application-specific payload (e.g. report_id).")
 
+    @field_validator("external_id")
+    @classmethod
+    def validate_external_id(cls, v: str | None) -> str | None:
+        """Validate that external_id is not empty if provided."""
+        if v is not None:
+            stripped = str(v).strip()
+            if not stripped:
+                raise ValueError("external_id cannot be empty or whitespace-only")
+            return stripped
+        return v
+
 
 class OrderConfirmSchema(BaseModel):
     """Request body for confirming order payment (called by payment webhook).
@@ -256,11 +267,16 @@ class TrialGrantSchema(BaseModel):
     """Request body for demo/reference trial grant endpoint.
 
     Uses TrialHistory to prevent double-granting. Provide user_id or (external_id + provider).
+    Optionally pass identities directly: {"telegram": 5454776146} for TrialHistory recording.
     """
 
     user_id: int | None = Field(None, description="Local billing user ID; required if external_id not provided.")
     external_id: str | None = Field(None, description="External identifier; used with provider.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
+    identities: dict[str, str | int] | None = Field(
+        None,
+        description="Optional identity map for TrialHistory; e.g. {'telegram': 5454776146}.",
+    )
     sku: str | None = Field(None, description="Offer SKU to grant as trial (e.g. OFF_TRIAL_PACK). Automatically normalized to uppercase.")
     grant_type: str = Field("trial", description="Grant type label; typically 'trial'.")
 
