@@ -150,6 +150,8 @@ External identity mapping for integrations.
 - **Methods**:
     - `get_user_by_identity(external_id, provider="default")`: Synchronously retrieves a User by their external identity.
     - `aget_user_by_identity(external_id, provider="default")`: Asynchronously retrieves a User by their external identity.
+    - `get_external_id_for_user(user, provider="default")`: Synchronously retrieves external_id for a user by provider.
+    - `aget_external_id_for_user(user, provider="default")`: Asynchronously retrieves external_id for a user by provider.
 
 ---
 

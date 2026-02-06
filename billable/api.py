@@ -94,15 +94,22 @@ async def _aresolve_external_to_user_id(provider: str, external_id: str) -> int:
 
     Returns:
         The primary key of the billing User (settings.AUTH_USER_MODEL).
+    
+    Raises:
+        ValueError: If external_id is empty or whitespace-only after stripping.
     """
+    external_id_stripped = external_id.strip()
+    if not external_id_stripped:
+        raise ValueError("external_id cannot be empty or whitespace-only")
+    
     identity, _ = await ExternalIdentity.objects.aupdate_or_create(
         provider=provider,
-        external_id=external_id.strip(),
+        external_id=external_id_stripped,
         defaults={},
     )
     if identity.user_id:
         return identity.user_id
-    username_value = f"billable_{provider}_{external_id.strip()}"
+    username_value = f"billable_{provider}_{external_id_stripped}"
     user, _ = await User.objects.aget_or_create(
         username=username_value,
         defaults={"first_name": "", "last_name": ""},
@@ -123,7 +130,8 @@ async def aidentify(request, data: IdentifySchemaIn):
     Request body: provider (optional, default 'default'), external_id (required), profile (optional).
     """
     provider_value = data.provider or "default"
-    external_id_value = str(data.external_id).strip()
+    # external_id is already validated and stripped by IdentifySchemaIn validator
+    external_id_value = data.external_id
     profile = data.profile or {}
 
     identity, created_identity = await ExternalIdentity.objects.aupdate_or_create(
@@ -657,8 +665,11 @@ async def aassign_referral(request, data: ReferralAssignSchema):
         referrer_user_id, referee_user_id = data.referrer_id, data.referee_id
     else:
         provider_value = data.provider or "default"
-        referrer_user_id = await _aresolve_external_to_user_id(provider_value, data.referrer_external_id)
-        referee_user_id = await _aresolve_external_to_user_id(provider_value, data.referee_external_id)
+        try:
+            referrer_user_id = await _aresolve_external_to_user_id(provider_value, data.referrer_external_id)
+            referee_user_id = await _aresolve_external_to_user_id(provider_value, data.referee_external_id)
+        except ValueError as e:
+            return 400, {"success": False, "message": str(e)}
 
     if referrer_user_id == referee_user_id:
         return 400, {"success": False, "message": "Referrer and referee cannot be same"}

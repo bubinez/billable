@@ -275,6 +275,14 @@ class IdentifySchemaIn(BaseModel):
     external_id: str = Field(..., description="Stable external identifier (e.g. telegram user id).")
     profile: dict[str, Any] | None = Field(None, description="Optional profile (first_name, last_name, telegram_username, etc.).")
 
+    @field_validator("external_id")
+    @classmethod
+    def validate_external_id(cls, v: str) -> str:
+        """Validate that external_id is not empty after stripping."""
+        if not v or not v.strip():
+            raise ValueError("external_id cannot be empty or whitespace-only")
+        return v.strip()
+
 
 class IdentifySchemaOut(BaseModel):
     """Response from identify: local user and identity info plus trial eligibility."""
@@ -301,6 +309,17 @@ class ReferralAssignSchema(BaseModel):
     referrer_external_id: str | None = Field(None, description="External ID of referrer; use with referee_external_id and provider.")
     referee_external_id: str | None = Field(None, description="External ID of referee; use with referrer_external_id and provider.")
     metadata: dict[str, Any] | None = Field(None, description="Optional payload (JSON).")
+
+    @field_validator("referrer_external_id", "referee_external_id")
+    @classmethod
+    def validate_external_id(cls, v: str | None) -> str | None:
+        """Validate that external_id is not empty if provided."""
+        if v is not None:
+            stripped = str(v).strip()
+            if not stripped:
+                raise ValueError("external_id cannot be empty or whitespace-only")
+            return stripped
+        return v
 
 
 class ExchangeSchema(BaseModel):

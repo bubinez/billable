@@ -229,9 +229,15 @@ async def on_first_purchase(sender, order, **kwargs):
                 await sync_to_async(TransactionService.grant_offer)(
                     user_id=referral.referrer_id,
                     offer=bonus_offer,
-                    source="referral_reward"
+                    source="referral_bonus",
+                    metadata={
+                        "referee_id": referral.referee_id,  # Required for webhook payload
+                        "order_id": order.id,  # Required for webhook payload
+                    }
                 )
 ```
+
+**Important**: When creating a referral bonus transaction, always include `referee_id` and `order_id` in the `metadata` parameter. This ensures that webhook payloads (e.g., `referral_bonus_granted` events) can include `referee_external_id` by looking up the referee's `ExternalIdentity` record. Without these fields in metadata, the webhook will only contain `referrer_external_id` and `referee_external_id` will be `null`.
 
 ---
 

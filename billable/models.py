@@ -822,6 +822,58 @@ class ExternalIdentity(models.Model):
         )
         return identity.user if identity else None
 
+    @classmethod
+    def get_external_id_for_user(
+        cls,
+        user: billable_settings.USER_MODEL,
+        provider: str = "default",
+    ) -> str | None:
+        """
+        Retrieves external_id for a user by provider.
+
+        Args:
+            user: The User instance to get external_id for.
+            provider: The name of the identity provider (e.g., 'telegram', 'n8n').
+
+        Returns:
+            The external_id string if found, otherwise None.
+
+        Example:
+            external_id = ExternalIdentity.get_external_id_for_user(user, provider="telegram")
+        """
+        identity = (
+            cls.objects.filter(user=user, provider=provider)
+            .select_related("user")
+            .first()
+        )
+        return identity.external_id if identity else None
+
+    @classmethod
+    async def aget_external_id_for_user(
+        cls,
+        user: billable_settings.USER_MODEL,
+        provider: str = "default",
+    ) -> str | None:
+        """
+        Asynchronously retrieves external_id for a user by provider.
+
+        Args:
+            user: The User instance to get external_id for.
+            provider: The name of the identity provider (e.g., 'telegram', 'n8n').
+
+        Returns:
+            The external_id string if found, otherwise None.
+
+        Example:
+            external_id = await ExternalIdentity.aget_external_id_for_user(user, provider="telegram")
+        """
+        identity = (
+            await cls.objects.filter(user=user, provider=provider)
+            .select_related("user")
+            .afirst()
+        )
+        return identity.external_id if identity else None
+
 
 class Referral(models.Model):
     """

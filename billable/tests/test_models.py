@@ -164,3 +164,41 @@ class TestExternalIdentity:
         """Test that aget_user_by_identity returns None asynchronously when not found."""
         found_user = await ExternalIdentity.aget_user_by_identity("nonexistent", provider="unknown")
         assert found_user is None
+
+    def test_get_external_id_for_user_found(self):
+        """Test that get_external_id_for_user returns the correct external_id when it exists."""
+        user = User.objects.create(username="testuser")
+        ExternalIdentity.objects.create(provider="telegram", external_id="12345", user=user)
+        
+        external_id = ExternalIdentity.get_external_id_for_user(user, provider="telegram")
+        assert external_id == "12345"
+
+    def test_get_external_id_for_user_not_found(self):
+        """Test that get_external_id_for_user returns None when identity doesn't exist."""
+        user = User.objects.create(username="testuser")
+        external_id = ExternalIdentity.get_external_id_for_user(user, provider="telegram")
+        assert external_id is None
+
+    def test_get_external_id_for_user_different_provider(self):
+        """Test that get_external_id_for_user returns None when identity exists with different provider."""
+        user = User.objects.create(username="testuser")
+        ExternalIdentity.objects.create(provider="n8n", external_id="67890", user=user)
+        
+        external_id = ExternalIdentity.get_external_id_for_user(user, provider="telegram")
+        assert external_id is None
+
+    @pytest.mark.asyncio
+    async def test_aget_external_id_for_user_found(self):
+        """Test that aget_external_id_for_user returns the correct external_id asynchronously."""
+        user = await User.objects.acreate(username="asyncuser_extid_found")
+        await ExternalIdentity.objects.acreate(provider="telegram", external_id="extid_99999", user=user)
+        
+        external_id = await ExternalIdentity.aget_external_id_for_user(user, provider="telegram")
+        assert external_id == "extid_99999"
+
+    @pytest.mark.asyncio
+    async def test_aget_external_id_for_user_not_found(self):
+        """Test that aget_external_id_for_user returns None asynchronously when not found."""
+        user = await User.objects.acreate(username="asyncuser_extid_notfound")
+        external_id = await ExternalIdentity.aget_external_id_for_user(user, provider="telegram")
+        assert external_id is None
