@@ -307,7 +307,7 @@ Refund a paid order and revoke associated products.
 Create a referral link between referrer and referee. Supports two input modes.
 
 - **By user IDs** — body: `referrer_id`, `referee_id` *(int)*, optional `metadata`.  
-- **By external identity** — body: `provider`, `referrer_external_id`, `referee_external_id` *(str)*, optional `metadata`. Both identities are resolved via `ExternalIdentity` (user created and linked if missing). Same semantics as `/identify` for each side.
+- **By external identity** — body: `provider`, `referrer_external_id`, `referee_external_id` *(str)*, optional `metadata`. Only existing `ExternalIdentity` records are used; if either identity is missing, returns 400 without creating the referral.
 
 #### `GET /referrals/stats`
 Referral statistics (e.g. count of invited users) for the referrer.

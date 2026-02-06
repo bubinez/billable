@@ -650,7 +650,8 @@ async def aassign_referral(request, data: ReferralAssignSchema):
     """Create a referral link between referrer and referee.
 
     Two modes: (referrer_id, referee_id) or (provider, referrer_external_id, referee_external_id).
-    External IDs are resolved via ExternalIdentity (user created if missing). Returns 400 if invalid or duplicate.
+    By external IDs: only existing ExternalIdentity records are used; if either identity is missing, returns 400.
+    Returns 400 if invalid, duplicate, or identity not found.
     """
     by_ids = data.referrer_id is not None and data.referee_id is not None
     by_external = (
@@ -663,13 +664,27 @@ async def aassign_referral(request, data: ReferralAssignSchema):
 
     if by_ids:
         referrer_user_id, referee_user_id = data.referrer_id, data.referee_id
+        # Explicitly verify user existence to satisfy "not processed if user does not exist" requirement
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if not await User.objects.filter(pk=referrer_user_id).aexists():
+            return 400, {"success": False, "message": "Referrer user not found in database"}
+        if not await User.objects.filter(pk=referee_user_id).aexists():
+            return 400, {"success": False, "message": "Referee user not found in database"}
     else:
         provider_value = data.provider or "default"
-        try:
-            referrer_user_id = await _aresolve_external_to_user_id(provider_value, data.referrer_external_id)
-            referee_user_id = await _aresolve_external_to_user_id(provider_value, data.referee_external_id)
-        except ValueError as e:
-            return 400, {"success": False, "message": str(e)}
+        referrer_user = await ExternalIdentity.aget_user_by_identity(
+            external_id=data.referrer_external_id, provider=provider_value
+        )
+        referee_user = await ExternalIdentity.aget_user_by_identity(
+            external_id=data.referee_external_id, provider=provider_value
+        )
+        if referrer_user is None:
+            return 400, {"success": False, "message": "Referrer identity not found"}
+        if referee_user is None:
+            return 400, {"success": False, "message": "Referee identity not found"}
+        referrer_user_id = referrer_user.id
+        referee_user_id = referee_user.id
 
     if referrer_user_id == referee_user_id:
         return 400, {"success": False, "message": "Referrer and referee cannot be same"}
