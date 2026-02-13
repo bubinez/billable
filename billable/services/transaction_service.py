@@ -288,7 +288,8 @@ class TransactionService:
                         "success": True,
                         "message": "Quota was consumed previously (idempotent)",
                         "usage_id": str(existing.id),
-                        "remaining": cls.get_balance(user_id, existing.quota_batch.product.product_key)
+                        "remaining": cls.get_balance(user_id, existing.quota_batch.product.product_key),
+                        "metadata": existing.metadata or {},
                     }
 
             batches_qs = cls._find_active_batches(user_id, product_key=product_key).order_by('created_at').select_for_update()
@@ -324,7 +325,8 @@ class TransactionService:
                 "success": True,
                 "message": "Quota consumed",
                 "usage_id": str(consumed_info[-1].id),
-                "remaining": cls.get_balance(user_id, active_batches[0].product.product_key)
+                "remaining": cls.get_balance(user_id, active_batches[0].product.product_key),
+                "metadata": consumed_info[-1].metadata or {},
             }
         
     @classmethod
@@ -334,7 +336,13 @@ class TransactionService:
 
     @classmethod
     @transaction.atomic
-    def exchange(cls, user_id: int, offer_id: UUID | str | None = None, offer: Offer | None = None) -> dict[str, Any]:
+    def exchange(
+        cls,
+        user_id: int,
+        offer_id: UUID | str | None = None,
+        offer: Offer | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """3.5 Exchange"""
         if not offer and offer_id: offer = Offer.objects.get(pk=offer_id)
         if not offer: raise ValueError("Offer not found")
@@ -353,22 +361,31 @@ class TransactionService:
             raise ValueError(f"Currency product '{currency_sku}' not found.")
 
         price = int(offer.price)
-        
+        tx_metadata = {**(metadata or {}), "price": price}
+
         res = cls.consume_quota(user_id=user_id, product_key=currency_sku, amount=price, action_type="exchange")
         if not res['success']: return res
 
-        cls.grant_offer(user_id, offer, source="exchange", metadata={"price": price})
-        return {"success": True, "message": "Exchanged"}
+        cls.grant_offer(user_id, offer, source="exchange", metadata=tx_metadata)
+        return {"success": True, "message": "Exchanged", "metadata": tx_metadata}
 
     @classmethod
-    async def aexchange(cls, user_id: int, offer_id: UUID | str | None = None, offer: Offer | None = None) -> dict[str, Any]:
+    async def aexchange(
+        cls,
+        user_id: int,
+        offer_id: UUID | str | None = None,
+        offer: Offer | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """3.5 Exchange (Async version)
         
         Calls the sync exchange method via sync_to_async to ensure that the entire
         operation (consumption of currency and granting of offer) happens within
         a single atomic transaction.
         """
-        return await sync_to_async(cls.exchange, thread_sensitive=True)(user_id=user_id, offer_id=offer_id, offer=offer)
+        return await sync_to_async(cls.exchange, thread_sensitive=True)(
+            user_id=user_id, offer_id=offer_id, offer=offer, metadata=metadata
+        )
 
 
     @classmethod

@@ -2,9 +2,30 @@ import pytest
 from django.contrib.auth import get_user_model
 from billable.models import Referral, Offer, Order as BillableOrder, Product, OfferItem
 from billable.signals import order_confirmed
-from billable.services import OrderService
+from billable.services import OrderService, TransactionService
 
 User = get_user_model()
+
+
+def _on_order_confirmed_referral_bonus(sender, order, **kwargs):
+    """Test handler: on first paid order for referee, claim referral bonus and grant offer to referrer."""
+    from billable.models import Order
+    is_first_paid = not Order.objects.filter(user=order.user, status=Order.Status.PAID).exclude(id=order.id).exists()
+    if not is_first_paid:
+        return
+    referral = Referral.objects.filter(referee=order.user).first()
+    if not referral:
+        return
+    if not referral.claim_bonus():
+        return
+    bonus_offer = Offer.objects.filter(sku="REFERRAL_GEM").first()
+    if bonus_offer:
+        TransactionService.grant_offer(
+            user_id=referral.referrer_id,
+            offer=bonus_offer,
+            source="referral_reward",
+            metadata={"referee_id": referral.referee_id, "order_id": order.id},
+        )
 
 @pytest.fixture
 def products(db):
@@ -24,8 +45,17 @@ def users(db):
     referee = User.objects.create(username="referee_sig")
     return referrer, referee
 
+
+@pytest.fixture
+def referral_bonus_handler():
+    """Connect order_confirmed handler that grants referral bonus; disconnect after test."""
+    order_confirmed.connect(_on_order_confirmed_referral_bonus)
+    yield
+    order_confirmed.disconnect(_on_order_confirmed_referral_bonus)
+
+
 @pytest.mark.django_db(transaction=True)
-def test_signal_handler_awards_bonus_on_first_payment(users, products):
+def test_signal_handler_awards_bonus_on_first_payment(users, products, referral_bonus_handler):
     referrer, referee = users
     bonus_offer, purchase_offer = products
     
@@ -52,7 +82,7 @@ def test_signal_handler_awards_bonus_on_first_payment(users, products):
     assert tx.amount == 1
 
 @pytest.mark.django_db(transaction=True)
-def test_signal_handler_no_bonus_on_second_payment(users, products):
+def test_signal_handler_no_bonus_on_second_payment(users, products, referral_bonus_handler):
     referrer, referee = users
     bonus_offer, purchase_offer = products
     

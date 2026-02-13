@@ -326,11 +326,12 @@ async def ademo_grant_trial(request, data: TrialGrantSchema):
         return 400, {"success": False, "message": "Trial offer not found"}
 
     # 3. Grant the offer using TransactionService
+    trial_metadata = {**(data.metadata or {}), "identities": identities}
     batches = await TransactionService.agrant_offer(
         user_id=resolved_user_id,
         offer=offer,
         source="trial_activation",
-        metadata={"identities": identities}
+        metadata=trial_metadata,
     )
 
     # 4. Mark trial as used in TrialHistory
@@ -348,7 +349,7 @@ async def ademo_grant_trial(request, data: TrialGrantSchema):
     product_names = [batch.product.name async for batch in QuotaBatch.objects.filter(id__in=[b.id for b in batches]).select_related('product').aiterator()]
     trial_activated.send(sender=TransactionService, user_id=resolved_user_id, products=product_names)
 
-    return {"success": True, "message": "Trial granted", "data": {"products": product_names}}
+    return {"success": True, "message": "Trial granted", "data": {"products": product_names, "metadata": trial_metadata}}
 
 
 
@@ -526,7 +527,9 @@ async def aexchange_offer(request, data: ExchangeSchema):
         # Normalize SKU to uppercase
         normalized_sku = data.sku.upper() if data.sku else ""
         offer = await Offer.objects.aget(sku=normalized_sku)
-        result = await TransactionService.aexchange(user_id=resolved_user_id, offer=offer)
+        result = await TransactionService.aexchange(
+            user_id=resolved_user_id, offer=offer, metadata=data.metadata
+        )
         if not result.get("success", True):
             return 400, {"success": False, "message": result.get("message", "Exchange failed")}
     except Offer.DoesNotExist:
@@ -705,7 +708,11 @@ async def aassign_referral(request, data: ReferralAssignSchema):
         if created:
              from .signals import referral_attached
              referral_attached.send(sender=None, referral=referral)
-        return {"success": True, "message": "Referral assigned", "data": {"created": created}}
+        return {
+            "success": True,
+            "message": "Referral assigned",
+            "data": {"created": created, "referral_id": referral.id, "metadata": referral.metadata or {}},
+        }
     except IntegrityError:
         return 400, {"success": False, "message": "Relationship exists or invalid IDs"}
 

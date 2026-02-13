@@ -276,20 +276,47 @@ class TestBillableAPI:
             "user_id": test_user.id,
             "product_key": "TOKENS",
             "action_type": "api_test",
-            "idempotency_key": "step-fifo"
+            "idempotency_key": "step-fifo",
         }
         for i in range(25):
             await api_client.post("/wallet/consume", json={**payload, "idempotency_key": f"key-{i}"})
-            
+
         res_w = await api_client.get(f"/wallet?user_id={test_user.id}")
         # Initial 30 - 25 = 5
         assert res_w.json()["balances"]["TOKENS"] == 5
-        
+
         # Check details
         res_b = await api_client.get(f"/wallet/batches?user_id={test_user.id}")
         active_batches = res_b.json()
         assert len(active_batches) == 1
         assert active_batches[0]["remaining_quantity"] == 5
+
+    async def test_wallet_consume_metadata_stored_and_returned(
+        self, api_client, test_user, tokens_product
+    ):
+        """POST /wallet/consume with optional metadata: stored in transaction and returned in response."""
+        await QuotaBatch.objects.acreate(
+            user=test_user,
+            product=tokens_product,
+            initial_quantity=10,
+            remaining_quantity=10,
+            state=QuotaBatch.State.ACTIVE,
+        )
+        res = await api_client.post(
+            "/wallet/consume",
+            json={
+                "user_id": test_user.id,
+                "product_key": "TOKENS",
+                "action_type": "usage",
+                "idempotency_key": "meta-test-1",
+                "metadata": {"report_id": 42},
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("success") is True
+        assert "data" in data and "metadata" in data["data"]
+        assert data["data"]["metadata"].get("report_id") == 42
 
     # --- Internal Exchange ---
 
@@ -338,6 +365,36 @@ class TestBillableAPI:
         assert balances["INTERNAL"] == 200
         assert balances["TOKENS"] == 100
         assert balances["PREMIUM"] == 1
+
+    async def test_exchange_metadata_stored_and_returned(
+        self, api_client, test_user, credits_product, bundle_offer
+    ):
+        """POST /exchange with optional metadata: stored in transaction and returned in response."""
+        await QuotaBatch.objects.acreate(
+            user=test_user,
+            product=credits_product,
+            initial_quantity=500,
+            remaining_quantity=500,
+            state=QuotaBatch.State.ACTIVE,
+        )
+        bundle_offer.currency = "INTERNAL"
+        bundle_offer.price = Decimal("300")
+        await sync_to_async(bundle_offer.save)()
+
+        meta = {"source": "telegram_menu", "campaign": "winter2024"}
+        res = await api_client.post(
+            "/exchange",
+            json={"user_id": test_user.id, "sku": bundle_offer.sku, "metadata": meta},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("success") is True
+        assert "data" in data and "metadata" in data["data"]
+        out_meta = data["data"]["metadata"]
+        assert out_meta.get("source") == meta["source"]
+        assert out_meta.get("campaign") == meta["campaign"]
+        assert "price" in out_meta
+        assert out_meta["price"] == 300
 
     async def test_balance_and_user_products(self, api_client, test_user, bundle_offer):
         await TransactionService.agrant_offer(test_user.id, bundle_offer)
@@ -468,6 +525,35 @@ class TestBillableAPI:
         res2 = await api_client.post("/demo/trial-grant", json=payload1)
         assert res2.status_code == 400
         assert res2.json()["data"]["error"] == "trial_already_used"
+
+    async def test_trial_grant_metadata_stored_and_returned(self, api_client, test_user):
+        """POST /demo/trial-grant with optional metadata: merged with identities and returned in response."""
+        offer = await Offer.objects.acreate(
+            sku="TRIAL_META",
+            name="Trial Meta",
+            price=0,
+            currency="USD",
+            is_active=True,
+        )
+        product = await Product.objects.acreate(
+            product_key="GEM_META", name="Gem Meta", is_active=True
+        )
+        await OfferItem.objects.acreate(offer=offer, product=product, quantity=1)
+
+        payload = {
+            "user_id": test_user.id,
+            "sku": "TRIAL_META",
+            "metadata": {"campaign": "winter2024", "source": "web"},
+        }
+        res = await api_client.post("/demo/trial-grant", json=payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("success") is True
+        assert "data" in data and "metadata" in data["data"]
+        out_meta = data["data"]["metadata"]
+        assert out_meta.get("campaign") == "winter2024"
+        assert out_meta.get("source") == "web"
+        assert "identities" in out_meta
 
     # --- Error Handling ---
 

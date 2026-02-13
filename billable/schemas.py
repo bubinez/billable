@@ -279,6 +279,7 @@ class TrialGrantSchema(BaseModel):
     )
     sku: str | None = Field(None, description="Offer SKU to grant as trial (e.g. OFF_TRIAL_PACK). Automatically normalized to uppercase.")
     grant_type: str = Field("trial", description="Grant type label; typically 'trial'.")
+    metadata: dict[str, Any] | None = Field(None, description="Optional context (JSON). Stored in transaction and returned in response.")
 
 
 class IdentifySchemaIn(BaseModel):
@@ -348,6 +349,7 @@ class ExchangeSchema(BaseModel):
     external_id: str | None = Field(None, description="External identifier; used with provider.")
     provider: str | None = Field(None, description="Identity provider. Defaults to 'default'.")
     sku: str = Field(..., description="Offer SKU to grant (e.g. OFF_PREMIUM_PACK). Automatically normalized to uppercase. Internal currency is consumed automatically.")
+    metadata: dict[str, Any] | None = Field(None, description="Optional context (JSON). Stored in the transaction and returned in the response.")
 
 
 # --- Schemas for Output Data (Responses) ---

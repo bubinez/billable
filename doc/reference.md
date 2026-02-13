@@ -249,9 +249,9 @@ Identify an external identity and ensure a local `User` exists (create and link 
 
 #### `POST /wallet/consume`
 Consume quota for a specific product (admin / server-to-server).
-- **Body**: `user_id` or (`external_id` + `provider`), `product_key`, `action_type`, `action_id`, `idempotency_key`.
+- **Body**: `user_id` or (`external_id` + `provider`), `product_key`, `action_type`, optional `action_id`, `idempotency_key`, optional `metadata` (JSON). The metadata is stored on the created DEBIT transaction.
 - **Note**: Automatically creates a local `User` if missing.
-- **Response (200)**: `{"success": true, ...}`
+- **Response (200)**: `{"success": true, "message": "...", "data": {"usage_id": "...", "remaining": N, "metadata": {...}}}`. The `data.metadata` is the stored transaction metadata (on idempotent replay, the existing transaction's metadata is returned).
 
 #### `POST /demo/trial-grant`
 (Demo/Reference implementation) Grant a trial offer with abuse protection.
@@ -259,26 +259,30 @@ Consume quota for a specific product (admin / server-to-server).
   ```json
   {
     "sku": "off_trial_pack",
-    "user_id": 123
+    "user_id": 123,
+    "metadata": { "campaign_id": "winter2024" }
   }
   ```
+  Optional `metadata` (JSON) is merged with internal data (e.g. identities) and stored on the created CREDIT transaction(s); the same merged metadata is returned in the response.
 - **Notes**: 
   - Uses `TrialHistory` to prevent double-granting. 
   - Automatically creates a local `User` if `external_id` + `provider` is used and user is missing.
   - This is a reference implementation; move logic to `PromotionService` in production.
+- **Response (200)**: `{"success": true, "message": "Trial granted", "data": {"products": [...], "metadata": {...}}}`
 
 ### 2. Commercial Flows
 
 #### `POST /exchange`
 Exchange internal currency for an offer (spend `product_key`, grant `sku`). 
 - **Entry point** for internal currency purchases.
-- **Logic**: Atomically consumes internal balance and grants the offer via `TransactionService.grant_offer(source="exchange")`.
-- **Body**: Send the JSON object **directly** as the request body (no top-level `"data"` wrapper). Content-Type: `application/json`.
+- **Logic**: Atomically consumes internal balance and grants the offer via `TransactionService.grant_offer(source="exchange")`. Optional request `metadata` is merged with internal data (e.g. price) and stored on the created Transaction; the same metadata is returned in the response.
+- **Body**: Send the JSON object **directly** as the request body (no top-level `"data"` wrapper). Content-Type: `application/json`. Optional field: `metadata` (JSON).
 - **By user ID**:
   ```json
   {
     "sku": "off_premium_pack",
-    "user_id": 123
+    "user_id": 123,
+    "metadata": { "source": "telegram_menu" }
   }
   ```
 - **By external identity** (e.g. Telegram): provide `external_id` and `provider` instead of `user_id`. User is resolved via `ExternalIdentity`.
@@ -286,11 +290,13 @@ Exchange internal currency for an offer (spend `product_key`, grant `sku`).
   {
     "sku": "off_premium_pack",
     "external_id": "322056265",
-    "provider": "telegram"
+    "provider": "telegram",
+    "metadata": { "source": "telegram_menu" }
   }
   ```
 - **Notes**: `sku` is required. Either `user_id` or (`external_id` + `provider`) must be present. If `provider` is omitted when using external identity, `"default"` is used.
 - **Auto-creation**: If a new `external_id` + `provider` is used, the system automatically creates a local `User` before processing the exchange.
+- **Response (200)**: `{"success": true, "message": "Exchange successful", "data": {"success": true, "message": "Exchanged", "metadata": {...}}}`. The `data.metadata` is the stored transaction metadata (includes at least `price`; plus any request metadata if provided).
 
 ### 3. Orders
 
@@ -336,6 +342,7 @@ Create a referral link between referrer and referee. Supports two input modes.
 
 - **By user IDs** — body: `referrer_id`, `referee_id` *(int)*, optional `metadata`.  
 - **By external identity** — body: `provider`, `referrer_external_id`, `referee_external_id` *(str)*, optional `metadata`. Only existing `ExternalIdentity` records are used; if either identity is missing, returns 400 without creating the referral.
+- **Response (200)**: `{"success": true, "message": "Referral assigned", "data": {"created": bool, "referral_id": int, "metadata": {...}}}`. The `metadata` is the stored Referral metadata (from the request or existing record).
 
 #### `GET /referrals/stats`
 Referral statistics (e.g. count of invited users) for the referrer.

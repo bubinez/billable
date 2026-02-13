@@ -204,22 +204,29 @@ class TestReferralAPI:
         assert referral is not None
 
     async def test_create_referral_with_metadata(self, api_client, referrer_user, referee_user):
-        """Test creating referral with metadata."""
+        """Test creating referral with metadata; response includes referral_id and metadata."""
         metadata = {"source": "web_app", "campaign": "summer2024"}
         payload = {
             "referrer_id": referrer_user.id,
             "referee_id": referee_user.id,
-            "metadata": metadata
+            "metadata": metadata,
         }
-        
+
         res = await api_client.post("/referrals", json=payload)
         assert res.status_code == 200
-        
+        res_data = res.json()
+        assert res_data.get("success") is True
+        assert "data" in res_data
+        assert "referral_id" in res_data["data"]
+        assert res_data["data"]["metadata"] == metadata
+
         referral = await Referral.objects.filter(
             referrer=referrer_user,
             referee=referee_user
         ).afirst()
+        assert referral is not None
         assert referral.metadata == metadata
+        assert referral.id == res_data["data"]["referral_id"]
 
     async def test_create_referral_duplicate(self, api_client, referrer_user, referee_user):
         """Test that duplicate referral cannot be created."""

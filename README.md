@@ -9,7 +9,7 @@ The module provides a single API and accounting layer for different orchestrator
 
 ## Status
 ![Status](https://img.shields.io/badge/Status-Active-success)
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.13%2B-blue)
 ![Django](https://img.shields.io/badge/Django-5.0%2B-green)
 
 ## Features

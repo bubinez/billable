@@ -66,7 +66,7 @@ This flow is managed via the **Order Life Cycle**:
 This flow is a specialized "buy with balance" mechanism:
 1.  **Entry Point**: `POST /exchange/` API endpoint or `TransactionService.exchange(...)`.
 2.  **Debit**: The system first consumes the "internal currency" product from the user's balance using FIFO logic.
-3.  **Credit**: Upon successful debit, it grants the target offer via `TransactionService.grant_offer(source="exchange")`.
+3.  **Credit**: Upon successful debit, it grants the target offer via `TransactionService.grant_offer(source="exchange")`. Optional request `metadata` is merged with internal data (e.g. price) and stored in the created Transaction; the same metadata is returned in the successful response.
 4.  **Atomicity**: Both operations (Debit internal + Grant target) are wrapped in a single database transaction.
 
 ### 4. Identification Policy
@@ -104,7 +104,7 @@ The module uses a **Transaction-based Ledger** approach where all balance change
 *   **Product Key Resolution**: When checking quota for a `product_key`, the system matches by `Product.product_key` only.
 
 ### 6. Referral Program
-*   **Chains**: Stores `referrer -> referee` links in the `Referral` model.
+*   **Chains**: Stores `referrer -> referee` links in the `Referral` model. Optional request `metadata` is stored on the Referral and returned in the API response together with `referral_id`.
 *   **Bonuses**: The module provides **signals** (`referral_attached`, `transaction_created`) for your application to implement bonus logic.
 *   **Verification**: Use `TrialHistory` to prevent bonus abuse.
 
