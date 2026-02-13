@@ -398,6 +398,16 @@ class Migration(migrations.Migration):
             name='description',
             field=models.TextField(blank=True, verbose_name='Product Description'),
         ),
+        migrations.AlterField(
+            model_name='order',
+            name='payment_id',
+            field=models.CharField(
+                blank=True,
+                max_length=255,
+                null=True,
+                verbose_name='Payment ID',
+            ),
+        ),
         migrations.RemoveField(
             model_name='product',
             name='period_days',

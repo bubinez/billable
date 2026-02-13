@@ -304,7 +304,7 @@ class Order(models.Model):
         verbose_name="Payment Method",
     )
     payment_id = models.CharField(
-        max_length=100,
+        max_length=255,
         null=True,
         blank=True,
         verbose_name="Payment ID",
