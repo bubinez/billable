@@ -1,0 +1,28 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <p>{% translate "Upload a CSV with headers: product_key, name, description, product_type, is_active, is_currency, created_at, metadata. Rows with existing product_key are updated; others are created. Offers are not imported." %}</p>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div>
+            <label for="csv_file">{% translate "CSV file" %}:</label>
+            <input type="file" name="csv_file" id="csv_file" accept=".csv" required>
+        </div>
+        <div style="margin-top: 15px;">
+            <input type="submit" value="{% translate 'Import' %}">
+            <a href="{% url opts|admin_urlname:'changelist' %}" class="button cancel-link">{% translate "Back to list" %}</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

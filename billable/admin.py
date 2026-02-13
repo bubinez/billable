@@ -6,9 +6,16 @@ Order, OrderItem, Referral, TrialHistory and ExternalIdentity.
 
 from __future__ import annotations
 
+import csv
+import json
+from decimal import Decimal
+from io import TextIOWrapper
+
 from django.contrib import admin
 from django.contrib.contenttypes.admin import GenericTabularInline
-from django.urls import reverse
+from django.contrib.messages import constants as message_constants
+from django.http import HttpResponse, HttpResponseRedirect
+from django.urls import path, reverse
 from django.utils.safestring import mark_safe
 
 from .models import (
@@ -101,15 +108,71 @@ class QuickOfferPlacementInline(admin.TabularInline):
     readonly_fields = ("offer", "quantity", "period_unit", "period_value")
 
 
+# Product export/import: all non-related fields (no offers link).
+PRODUCT_IMPORT_EXPORT_FIELDS = (
+    "product_key",
+    "name",
+    "description",
+    "product_type",
+    "is_active",
+    "is_currency",
+    "created_at",
+    "metadata",
+)
+
+# Offer export/import: all non-related fields + product link columns.
+OFFER_IMPORT_EXPORT_FIELDS = (
+    "sku",
+    "name",
+    "price",
+    "currency",
+    "image",
+    "description",
+    "is_active",
+    "created_at",
+    "metadata",
+)
+OFFER_ITEMS_COLUMNS = ("product_key", "quantity", "period_unit", "period_value")
+OFFER_CSV_HEADERS = OFFER_IMPORT_EXPORT_FIELDS + OFFER_ITEMS_COLUMNS
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     """Comprehensive Admin for Product and its Market Presence."""
     form = ProductAdminForm
 
     list_display = ("id", "product_key", "name", "product_type", "is_currency", "is_active", "created_at")
+    actions = ["export_products_csv"]
+    change_list_template = "admin/billable/product/change_list.html"
     list_filter = ("product_type", "is_currency", "is_active", "created_at")
     search_fields = ("product_key", "name", "description")
     readonly_fields = ("created_at", "active_offers", "product_report")
+
+    def export_products_csv(self, request, queryset) -> HttpResponse:
+        """Export selected products to CSV (all non-related fields, no offers)."""
+        if not queryset.exists():
+            queryset = Product.objects.all()
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="products_export.csv"'
+        writer = csv.writer(response)
+        writer.writerow(PRODUCT_IMPORT_EXPORT_FIELDS)
+        for obj in queryset.order_by("id"):
+            row = []
+            for f in PRODUCT_IMPORT_EXPORT_FIELDS:
+                val = getattr(obj, f)
+                if f == "metadata":
+                    val = json.dumps(val, ensure_ascii=False) if val else "{}"
+                elif f == "created_at" and val is not None:
+                    val = val.isoformat()
+                elif val is None:
+                    val = ""
+                else:
+                    val = str(val)
+                row.append(val)
+            writer.writerow(row)
+        return response
+
+    export_products_csv.short_description = _("Export selected products (CSV)")
 
     def active_offers(self, obj):
         """Renders a clean table of existing offers for this product."""
@@ -242,6 +305,98 @@ class ProductAdmin(admin.ModelAdmin):
 
     product_report.short_description = _("Product report")
 
+    def get_urls(self) -> list:
+        """Add import URL for Product admin."""
+        urls = super().get_urls()
+        return [
+            path("import/", self.admin_site.admin_view(self.import_products_view), name="billable_product_import"),
+        ] + urls
+
+    def import_products_view(self, request) -> HttpResponse | HttpResponseRedirect:
+        """Import products from CSV: upsert by product_key; all non-related fields; offers not imported."""
+        if request.method == "POST" and request.FILES.get("csv_file"):
+            created = 0
+            updated = 0
+            errors = []
+            f = TextIOWrapper(request.FILES["csv_file"].file, encoding="utf-8-sig")
+            reader = csv.DictReader(f)
+            if not reader.fieldnames or set(reader.fieldnames) != set(PRODUCT_IMPORT_EXPORT_FIELDS):
+                self.message_user(
+                    request,
+                    _("CSV must have headers: %(headers)s") % {"headers": ", ".join(PRODUCT_IMPORT_EXPORT_FIELDS)},
+                    level=message_constants.ERROR,
+                )
+                return HttpResponseRedirect(reverse("admin:billable_product_import"))
+            for i, row in enumerate(reader, start=2):
+                key_raw = (row.get("product_key") or "").strip()
+                product_key = key_raw.upper() if key_raw else None
+                try:
+                    metadata_val = row.get("metadata", "{}").strip() or "{}"
+                    metadata = json.loads(metadata_val)
+                except json.JSONDecodeError:
+                    errors.append(_("Row %(row)s: invalid metadata JSON") % {"row": i})
+                    continue
+                created_at_val = (row.get("created_at") or "").strip()
+                created_at = None
+                if created_at_val:
+                    from django.utils.dateparse import parse_datetime
+                    created_at = parse_datetime(created_at_val)
+                product_type = (row.get("product_type") or "").strip()
+                if product_type not in dict(Product.ProductType.choices):
+                    errors.append(_("Row %(row)s: invalid product_type") % {"row": i})
+                    continue
+                is_active = (row.get("is_active") or "").strip().lower() in ("1", "true", "yes")
+                is_currency = (row.get("is_currency") or "").strip().lower() in ("1", "true", "yes")
+                product, was_created = Product.objects.get_or_create(
+                    product_key=product_key,
+                    defaults={
+                        "name": (row.get("name") or "").strip() or "—",
+                        "description": (row.get("description") or "").strip(),
+                        "product_type": product_type,
+                        "is_active": is_active,
+                        "is_currency": is_currency,
+                        "metadata": metadata,
+                    },
+                )
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+                product.name = (row.get("name") or "").strip() or product.name
+                product.description = (row.get("description") or "").strip()
+                product.product_type = product_type
+                product.is_active = is_active
+                product.is_currency = is_currency
+                product.metadata = metadata
+                product.save(update_fields=["name", "description", "product_type", "is_active", "is_currency", "metadata"])
+                if created_at:
+                    Product.objects.filter(pk=product.pk).update(created_at=created_at)
+            for err in errors[:10]:
+                self.message_user(request, err, level=message_constants.ERROR)
+            if len(errors) > 10:
+                self.message_user(
+                    request,
+                    _("%(count)s more errors.") % {"count": len(errors) - 10},
+                    level=message_constants.ERROR,
+                )
+            self.message_user(
+                request,
+                _("Import finished: %(created)s created, %(updated)s updated.") % {"created": created, "updated": updated},
+            )
+            return HttpResponseRedirect(reverse("admin:billable_product_changelist"))
+        context = {
+            **self.admin_site.each_context(request),
+            "title": _("Import products (CSV)"),
+            "opts": self.model._meta,
+        }
+        from django.template.loader import render_to_string
+        html = render_to_string(
+            "admin/billable/product/import_form.html",
+            context,
+            request=request,
+        )
+        return HttpResponse(html)
+
     fieldsets = (
         (_("📦 Technical DNA (The Product)"), {
             "fields": ("product_key", "name", "description", "product_type", "is_active"),
@@ -346,7 +501,211 @@ class OfferAdmin(admin.ModelAdmin):
     search_fields = ("sku", "name", "description")
     readonly_fields = ("id", "created_at")
     inlines = (OfferItemInline,)
-    
+    actions = ["export_offers_csv"]
+    change_list_template = "admin/billable/offer/change_list.html"
+
+    def export_offers_csv(self, request, queryset) -> HttpResponse:
+        """Export selected offers to CSV (all non-related fields + product links by product_key)."""
+        if not queryset.exists():
+            queryset = Offer.objects.all()
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="offers_export.csv"'
+        writer = csv.writer(response)
+        writer.writerow(OFFER_CSV_HEADERS)
+        for offer in queryset.prefetch_related("items__product").order_by("id"):
+            row_base = []
+            for f in OFFER_IMPORT_EXPORT_FIELDS:
+                val = getattr(offer, f)
+                if f == "metadata":
+                    val = json.dumps(val, ensure_ascii=False) if val else "{}"
+                elif f == "created_at" and val is not None:
+                    val = val.isoformat()
+                elif f == "image":
+                    val = (offer.image.name or "").strip()
+                elif val is None:
+                    val = ""
+                else:
+                    val = str(val)
+                row_base.append(val)
+            items = list(offer.items.select_related("product").all())
+            if not items:
+                writer.writerow(row_base + ["", "", "", ""])
+            else:
+                for item in items:
+                    pk_val = (item.product.product_key or "").strip()
+                    qty = item.quantity
+                    pu = (item.period_unit or "").strip()
+                    pv = item.period_value if item.period_value is not None else ""
+                    writer.writerow(row_base + [pk_val, qty, pu, pv])
+        return response
+
+    export_offers_csv.short_description = _("Export selected offers (CSV)")
+
+    def get_urls(self) -> list:
+        """Add import URL for Offer admin."""
+        urls = super().get_urls()
+        return [
+            path("import/", self.admin_site.admin_view(self.import_offers_view), name="billable_offer_import"),
+        ] + urls
+
+    def import_offers_view(self, request) -> HttpResponse | HttpResponseRedirect:
+        """Import offers from CSV: upsert by sku; overwrite product links if any product_key in file; skip missing products with notification."""
+        if request.method == "POST" and request.FILES.get("csv_file"):
+            created = 0
+            updated = 0
+            errors = []
+            skipped_products: list[str] = []
+            links_overwritten: list[str] = []
+
+            f = TextIOWrapper(request.FILES["csv_file"].file, encoding="utf-8-sig")
+            reader = csv.DictReader(f)
+            if not reader.fieldnames or set(reader.fieldnames) != set(OFFER_CSV_HEADERS):
+                self.message_user(
+                    request,
+                    _("CSV must have headers: %(headers)s") % {"headers": ", ".join(OFFER_CSV_HEADERS)},
+                    level=message_constants.ERROR,
+                )
+                return HttpResponseRedirect(reverse("admin:billable_offer_import"))
+
+            from django.utils.dateparse import parse_datetime
+
+            rows = list(reader)
+            by_sku: dict[str, list[dict]] = {}
+            for row in rows:
+                sku_raw = (row.get("sku") or "").strip()
+                sku = sku_raw.upper() if sku_raw else None
+                if not sku:
+                    errors.append(_("Row with empty sku skipped."))
+                    continue
+                if sku not in by_sku:
+                    by_sku[sku] = []
+                by_sku[sku].append(row)
+
+            for sku, group in by_sku.items():
+                first = group[0]
+                try:
+                    metadata_val = (first.get("metadata") or "{}").strip() or "{}"
+                    metadata = json.loads(metadata_val)
+                except json.JSONDecodeError:
+                    errors.append(_("Offer %(sku)s: invalid metadata JSON") % {"sku": sku})
+                    continue
+                created_at_val = (first.get("created_at") or "").strip()
+                created_at = parse_datetime(created_at_val) if created_at_val else None
+                price_val = (first.get("price") or "").strip()
+                if not price_val:
+                    errors.append(_("Offer %(sku)s: price is required") % {"sku": sku})
+                    continue
+                try:
+                    price = Decimal(price_val)
+                except (ValueError, TypeError):
+                    errors.append(_("Offer %(sku)s: invalid price") % {"sku": sku})
+                    continue
+
+                offer, was_created = Offer.objects.get_or_create(
+                    sku=sku,
+                    defaults={
+                        "name": (first.get("name") or "").strip() or "—",
+                        "price": price,
+                        "currency": (first.get("currency") or "").strip() or "USD",
+                        "description": (first.get("description") or "").strip(),
+                        "is_active": (first.get("is_active") or "").strip().lower() in ("1", "true", "yes"),
+                        "metadata": metadata,
+                    },
+                )
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+
+                offer.name = (first.get("name") or "").strip() or offer.name
+                offer.price = price
+                offer.currency = (first.get("currency") or "").strip() or offer.currency
+                offer.description = (first.get("description") or "").strip()
+                offer.is_active = (first.get("is_active") or "").strip().lower() in ("1", "true", "yes")
+                offer.metadata = metadata
+                offer.save(update_fields=["name", "price", "currency", "description", "is_active", "metadata"])
+                if created_at:
+                    Offer.objects.filter(pk=offer.pk).update(created_at=created_at)
+
+                has_any_product_key = any((r.get("product_key") or "").strip() for r in group)
+                if has_any_product_key:
+                    OfferItem.objects.filter(offer=offer).delete()
+                    links_overwritten.append(sku)
+                    for r in group:
+                        pk_raw = (r.get("product_key") or "").strip()
+                        product_key = pk_raw.upper() if pk_raw else None
+                        if not product_key:
+                            continue
+                        product = Product.objects.filter(product_key=product_key).first()
+                        if not product:
+                            skipped_products.append(f"{product_key} (offer {sku})")
+                            continue
+                        qty_val = (r.get("quantity") or "").strip()
+                        quantity = 1
+                        if qty_val:
+                            try:
+                                quantity = max(1, int(qty_val))
+                            except ValueError:
+                                pass
+                        period_unit = (r.get("period_unit") or "").strip()
+                        if period_unit not in dict(OfferItem.PeriodUnit.choices):
+                            period_unit = OfferItem.PeriodUnit.FOREVER
+                        period_value = None
+                        pv = (r.get("period_value") or "").strip()
+                        if pv:
+                            try:
+                                period_value = max(0, int(pv))
+                            except ValueError:
+                                pass
+                        OfferItem.objects.create(
+                            offer=offer,
+                            product=product,
+                            quantity=quantity,
+                            period_unit=period_unit,
+                            period_value=period_value,
+                        )
+
+            for err in errors[:10]:
+                self.message_user(request, err, level=message_constants.ERROR)
+            if len(errors) > 10:
+                self.message_user(
+                    request,
+                    _("%(count)s more errors.") % {"count": len(errors) - 10},
+                    level=message_constants.ERROR,
+                )
+            self.message_user(
+                request,
+                _("Import finished: %(created)s created, %(updated)s updated.") % {"created": created, "updated": updated},
+            )
+            if links_overwritten:
+                self.message_user(
+                    request,
+                    _("Links overwritten for offers: %(skus)s.") % {"skus": ", ".join(links_overwritten)},
+                    level=message_constants.SUCCESS,
+                )
+            if skipped_products:
+                self.message_user(
+                    request,
+                    _("Skipped (product not found in DB): %(keys)s.") % {"keys": ", ".join(skipped_products[:20])},
+                    level=message_constants.WARNING,
+                )
+                if len(skipped_products) > 20:
+                    self.message_user(
+                        request,
+                        _("%(count)s more skipped product keys.") % {"count": len(skipped_products) - 20},
+                        level=message_constants.WARNING,
+                    )
+            return HttpResponseRedirect(reverse("admin:billable_offer_changelist"))
+
+        from django.template.loader import render_to_string
+        context = {
+            **self.admin_site.each_context(request),
+            "title": _("Import offers (CSV)"),
+            "opts": self.model._meta,
+        }
+        html = render_to_string("admin/billable/offer/import_form.html", context, request=request)
+        return HttpResponse(html)
+
     def get_form(self, request, obj=None, **kwargs):
         """Add help text about SKU normalization."""
         form = super().get_form(request, obj, **kwargs)
