@@ -306,11 +306,16 @@ class ProductAdmin(admin.ModelAdmin):
     product_report.short_description = _("Product report")
 
     def get_urls(self) -> list:
-        """Add import URL for Product admin."""
+        """Add import and export URLs for Product admin."""
         urls = super().get_urls()
         return [
             path("import/", self.admin_site.admin_view(self.import_products_view), name="billable_product_import"),
+            path("export/", self.admin_site.admin_view(self.export_products_all_view), name="billable_product_export"),
         ] + urls
+
+    def export_products_all_view(self, request) -> HttpResponse:
+        """Export all products as CSV (used by the 'Export CSV' link in list view)."""
+        return self.export_products_csv(request, Product.objects.all())
 
     def import_products_view(self, request) -> HttpResponse | HttpResponseRedirect:
         """Import products from CSV: upsert by product_key; all non-related fields; offers not imported."""
@@ -542,11 +547,16 @@ class OfferAdmin(admin.ModelAdmin):
     export_offers_csv.short_description = _("Export selected offers (CSV)")
 
     def get_urls(self) -> list:
-        """Add import URL for Offer admin."""
+        """Add import and export URLs for Offer admin."""
         urls = super().get_urls()
         return [
             path("import/", self.admin_site.admin_view(self.import_offers_view), name="billable_offer_import"),
+            path("export/", self.admin_site.admin_view(self.export_offers_all_view), name="billable_offer_export"),
         ] + urls
+
+    def export_offers_all_view(self, request) -> HttpResponse:
+        """Export all offers as CSV (used by the 'Export CSV' link in list view)."""
+        return self.export_offers_csv(request, Offer.objects.all())
 
     def import_offers_view(self, request) -> HttpResponse | HttpResponseRedirect:
         """Import offers from CSV: upsert by sku; overwrite product links if any product_key in file; skip missing products with notification."""

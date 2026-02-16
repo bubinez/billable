@@ -4,6 +4,9 @@
 {% block object-tools-items %}
 {{ block.super }}
 <li>
+    <a href="{% url 'admin:billable_product_export' %}" class="viewsitelink">{% translate "Export CSV" %}</a>
+</li>
+<li>
     <a href="{% url 'admin:billable_product_import' %}" class="addlink">{% translate "Import CSV" %}</a>
 </li>
 {% endblock %}
