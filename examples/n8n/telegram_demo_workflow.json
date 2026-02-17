@@ -1475,10 +1475,6 @@
               "stringValue": "https://your-billable-domain.com"
             },
             {
-              "name": "BILLABLE_TOKEN",
-              "stringValue": "your-secret-api-token-here"
-            },
-            {
               "name": "START_KEYBOARD",
               "stringValue": "={{ {\n  \"rows\": [\n    { \"row\": { \"buttons\": [ { \"text\": \"🎁 Get free Star\" } ] } }\n  ],\n  \"options\": { \"resize_keyboard\": true, \"one_time_keyboard\": true }\n} }}"
             },

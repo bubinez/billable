@@ -66,6 +66,32 @@ Open the **Config** node (the first node in the workflow) and update the values:
 | Name | Description |
 |------|-------------|
 | `BILLABLE_URL` | Your API URL (e.g., `http://127.0.0.1:8000` or `https://api.myapp.com`). |
-| `BILLABLE_TOKEN` | The `BILLABLE_API_TOKEN` you defined in `settings.py`. |
 
-*Don't forget to configure your Telegram Bot credentials in the Telegram nodes!*
+### 5. Credentials Setup
+
+You need to configure **3 credentials** in n8n for this workflow to function:
+
+#### A. Billable API (HTTP Header Auth)
+
+1. Go to **Credentials** > **New**.
+2. Search for **Header Auth**.
+3. Name it `Billable API` (or similar).
+4. **Name**: `Authorization`
+5. **Value**: `Bearer <YOUR_BILLABLE_API_TOKEN>`
+   - *Replace `<YOUR_BILLABLE_API_TOKEN>` with the token from your Django settings.*
+   - **Important**: You **must** include the word `Bearer` followed by a space. The API code uses standard `HttpBearer` authentication and will reject the token without this prefix.
+6. Ensure all HTTP Request nodes in the workflow use this credential.
+
+#### B. Telegram Bot
+Standard Telegram Bot API credential.
+
+1. Search for **Telegram API**.
+2. Enter your **Bot Token** (obtained from [@BotFather](https://t.me/BotFather)).
+
+#### C. Telegram Stars (Payments)
+This workflow uses the **Telegram Stars** community node for handling payments.
+
+1. Search for **Telegram Stars API**.
+2. **Setup**:
+   - **Bot Token**: Use the same token as in step B.
+   - **Provider Token**: Leave empty (or enter any string) if you are only using Telegram Stars (XTR). Stars are a native currency and do not require connecting an external provider like Stripe in BotFather.
