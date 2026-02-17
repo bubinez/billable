@@ -1,0 +1,2021 @@
+{
+  "name": "billable",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number($json.PRED_BALANCE ?? 0) }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              },
+              "rightValue": 1,
+              "id": "672acaa4-9834-4a43-943b-f28737397e2c"
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "cc86a04f-775b-459c-abc4-e099ac3f4ca7",
+      "name": "If: Has Prediction",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        784,
+        752
+      ],
+      "alwaysOutputData": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/balance?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram&product_key=TEST_PREDICTION",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "e6d8195b-c4ae-4052-93a4-9c1f38d42e99",
+      "name": "Billable: Check Balance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        752
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.remaining ?? $json.balance ?? 0).toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3d415b2f-9635-4186-b672-30a90ec80634",
+      "name": "Set Pred Balance",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        624,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/orders",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"provider\": \"telegram\",\n  \"external_id\": \"{{ $('Config').item.json.CHAT_ID }}\",\n  \"items\": [{\"sku\": \"get_TEST_STAR\", \"quantity\": 1}]\n}",
+        "options": {}
+      },
+      "id": "69bf6f62-b0e9-4871-9c9a-e5de4ec38558",
+      "name": "Billable: Create Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        1312
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/orders/{{ $json.message.successful_payment.invoice_payload }}/confirm",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"payment_id\": \"{{ $json.message.successful_payment.telegram_payment_charge_id }}\",\n  \"payment_method\": \"telegram_payments\"\n}",
+        "options": {}
+      },
+      "id": "d7b5bde5-02f9-4893-bca3-55c9b51685df",
+      "name": "Billable: Confirm Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -592,
+        240
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "✅ **Payment successful!**\n\nYour stars have been added to your balance.",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance Payment').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance Payment').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance Payment').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "29298608-a75a-4ede-ac69-7fe65cc00a7c",
+      "name": "TG: Payment OK",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -32,
+        240
+      ],
+      "webhookId": "108f933f-f76e-4e9f-a572-8268b6b1b028",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "📖 **Help & Instructions**\n\n1. **Exchange Star** — convert 1 Star into 1 Prediction.\n2. **Get a prediction** — use 1 Prediction to get a random future forecast.\n3. **Buy Stars (XTR)** — top up your balance using Telegram Stars.\n\nEach prediction costs 1 Star. You can get a free Star using the button in the /start message!",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "fd231ea5-a3f9-4eb6-94c3-e38f56318dc9",
+      "name": "TG: Help Msg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        1504
+      ],
+      "webhookId": "5051a759-fb58-4f54-98bd-bcbb5a5ac17e",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query",
+          "pre_checkout_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "32c55821-c01f-4bad-8639-a1e462fd32c6",
+      "name": "Telegram Trigger1",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1424,
+        304
+      ],
+      "webhookId": "f4726463-5418-4ddc-833c-60edc4c32591",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "ff134668-c352-4113-bb10-434f7945c44f",
+      "name": "Merge1",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1008,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.pre_checkout_query }}",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "4152cb8f-4588-4fb2-aa1a-939fb1092488"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pre_checkout"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message?.successful_payment }}",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "fa07a89e-1b9c-43ad-becd-2086499e20ea"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "payment_success"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ !($json.pre_checkout_query || $json.message?.successful_payment) }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "3b400fc4-51af-4423-9eb7-c25579965db6"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ed60a32b-d2ff-461c-9acb-021b6bc1d02f",
+      "name": "Main Router1",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -816,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/identify",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"provider\": \"telegram\",\n  \"external_id\": \"{{ $('Config').item.json.CHAT_ID }}\",\n  \"profile\": {\n    \"username\": \"{{ $json.message?.from?.username || $json.callback_query?.from?.username || '' }}\",\n    \"first_name\": \"{{ $json.message?.from?.first_name || $json.callback_query?.from?.first_name || '' }}\",\n    \"last_name\": \"{{ $json.message?.from?.last_name || $json.callback_query?.from?.last_name || '' }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "285e846b-5bda-4114-a549-626864befffe",
+      "name": "Billable: Create Acc1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -608,
+        432
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "6aa8cc70-fbb7-4734-8a22-9e33865abe13",
+      "name": "Billable: Get Wallet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -432,
+        528
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0).toString() }}"
+            },
+            {
+              "name": "STAR_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_STAR ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "=🔮 Get a prediction ({{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0) }})"
+            },
+            {
+              "name": "BTN_EXCHANGE",
+              "stringValue": "⭐ Exchange Star"
+            },
+            {
+              "name": "BTN_TOPUP",
+              "stringValue": "=💫 Buy Stars ({{ ($json.balances?.TEST_STAR ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "94f3a8d0-c073-4194-a371-c9a1f4cc9656",
+      "name": "Set Balance",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        -208,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "99bd433b-1dd8-496a-abb8-7dc34cc934b7",
+      "name": "Billable: Get Wallet (payment)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        240
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0).toString() }}"
+            },
+            {
+              "name": "STAR_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_STAR ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "=🔮 Get a prediction ({{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0) }})"
+            },
+            {
+              "name": "BTN_EXCHANGE",
+              "stringValue": "⭐ Exchange Star"
+            },
+            {
+              "name": "BTN_TOPUP",
+              "stringValue": "=💫 Buy Stars ({{ ($json.balances?.TEST_STAR ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4cdfcb9-4168-43c1-a090-b9e3588728a6",
+      "name": "Set Balance Payment",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        -208,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "f58dbe09-d5f2-401c-8e1a-cb1960223d40",
+      "name": "Billable: Get Wallet (exchange ok)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        960
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0).toString() }}"
+            },
+            {
+              "name": "STAR_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_STAR ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "=🔮 Get a prediction ({{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0) }})"
+            },
+            {
+              "name": "BTN_EXCHANGE",
+              "stringValue": "⭐ Exchange Star"
+            },
+            {
+              "name": "BTN_TOPUP",
+              "stringValue": "=💫 Buy Stars ({{ ($json.balances?.TEST_STAR ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "839ecdea-1b4a-485d-89d4-6713f278c22a",
+      "name": "Set Balance (exchange ok)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "a5b51cfa-1611-425d-8997-9d55c48e228e",
+      "name": "Billable: Get Wallet (exchange fail)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        1120
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0).toString() }}"
+            },
+            {
+              "name": "STAR_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_STAR ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "=🔮 Get a prediction ({{ ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0) }})"
+            },
+            {
+              "name": "BTN_EXCHANGE",
+              "stringValue": "⭐ Exchange Star"
+            },
+            {
+              "name": "BTN_TOPUP",
+              "stringValue": "=💫 Buy Stars ({{ ($json.balances?.TEST_STAR ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2cf72dbd-3a9d-4753-8a25-48f52d18e033",
+      "name": "Set Balance (exchange fail)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "36218fe1-4223-4836-b89b-eb7be1007c77",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -32,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    },
+                    "rightValue": "/start",
+                    "id": "dc7a524b-1ce5-4899-9b02-d7488f864f67"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "rightValue": "Get free Star",
+                    "id": "8e8b8280-0c58-4bfa-a4b4-b3b49da81dd6"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "trial"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "rightValue": "Get a prediction",
+                    "id": "55dea192-0328-4d64-8f20-d96ce971cec2"
+                  },
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    },
+                    "rightValue": "/predict",
+                    "id": "9fe8725e-f869-4f56-807e-a9f7ddb5bc7f"
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "predict"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "rightValue": "Exchange Star",
+                    "id": "1869c2c3-5324-436c-b00e-1d647cbd0147"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "exchange"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "rightValue": "Buy Stars",
+                    "id": "a62399dc-a60f-4c65-b763-b9dab4872f7c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "topup"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Merge1').item.json.message?.text }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    },
+                    "rightValue": "/help",
+                    "id": "250dd7c3-944b-49ce-9639-c61a757d6e3f"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "help"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "c15ac187-2d95-43c0-8be2-4ebee0f1b6d7",
+      "name": "Command Router1",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        128,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/demo/trial-grant",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"external_id\": \"{{ $('Config').item.json.CHAT_ID }}\",\n  \"provider\": \"telegram\",\n  \"sku\": \"get_TEST_STAR\",\n  \"grant_type\": \"trial\"\n}",
+        "options": {}
+      },
+      "id": "d141c7d0-67b5-4894-adba-06315482a198",
+      "name": "Billable: Bonus1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        384
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "✅ **Bonus credited!**\n\nYou can now exchange it for a prediction or buy more stars.",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "c5176cbe-a08d-434e-bb2c-f472a82bff99",
+      "name": "TG: Trial activated1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        368
+      ],
+      "webhookId": "997672e7-2981-487d-acf3-7e92b45d18db",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "You've already used your free Star.\n\nUse the buttons below to get a prediction, exchange a star, or buy more.",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "26e694e9-342d-4e68-a27f-9a5ff203cb03",
+      "name": "TG: Trial already used",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        560
+      ],
+      "webhookId": "997672e7-2981-487d-acf3-7e92b45d18db",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet/consume",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"external_id\": \"{{ $('Config').item.json.CHAT_ID }}\",\n  \"provider\": \"telegram\",\n  \"product_key\": \"TEST_PREDICTION\",\n  \"action_type\": \"predict\"\n}",
+        "options": {}
+      },
+      "id": "cd8b65af-62d3-4060-9b73-3592e03f7320",
+      "name": "Billable: Consume Pred1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        624
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/balance?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram&product_key=TEST_PREDICTION",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "3a384d6a-ba76-4ec8-a804-491cbd7f13e2",
+      "name": "Billable: Check Balance (after consume)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1744,
+        624
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ ($json.remaining ?? $json.balance ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "=🔮 Get a prediction ({{ ($json.remaining ?? $json.balance ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05b9f9f5-28f1-468b-b480-81d84894f039",
+      "name": "Set Pred From Balance",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1968,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/wallet?external_id={{ $('Config').item.json.CHAT_ID }}&provider=telegram",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "a3da80d3-428e-4f45-b41d-9975d023600e",
+      "name": "Billable: Get Wallet (after pred)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2128,
+        752
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "c8618900-91c0-4abf-b708-8ef714c0e4ed",
+      "name": "Merge (after pred)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2336,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "PRED_BALANCE",
+              "stringValue": "={{ $json.PRED_BALANCE ?? ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0).toString() }}"
+            },
+            {
+              "name": "STAR_BALANCE",
+              "stringValue": "={{ ($json.balances?.TEST_STAR ?? 0).toString() }}"
+            },
+            {
+              "name": "BTN_PREDICT",
+              "stringValue": "={{ $json.BTN_PREDICT ?? ('🔮 Get a prediction (' + ($json.balances?.TEST_PREDICTION ?? $json.remaining ?? 0) + ')') }}"
+            },
+            {
+              "name": "BTN_EXCHANGE",
+              "stringValue": "⭐ Exchange Star"
+            },
+            {
+              "name": "BTN_TOPUP",
+              "stringValue": "=💫 Buy Stars ({{ ($json.balances?.TEST_STAR ?? 0) }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "01697133-e4b1-4797-8da7-d1e538d2acf7",
+      "name": "Set Balance (after pred)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        2560,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const predictions = [\"Today is a great day!\", \"You will find success!\", \"Believe in yourself!\"];\nreturn { text: predictions[Math.floor(Math.random() * predictions.length)] };"
+      },
+      "id": "09b4084b-82dc-495d-9210-987a78f2861b",
+      "name": "Code: Prediction1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.BILLABLE_URL }}/api/v1/billing/exchange",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"external_id\": \"{{ $('Config').item.json.CHAT_ID }}\",\n  \"provider\": \"telegram\",\n  \"sku\": \"get_TEST_PREDICTION\"\n}",
+        "options": {}
+      },
+      "id": "84574b22-42e7-44de-a24b-065668f53aa0",
+      "name": "Billable: Give Pred1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        624,
+        1056
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qcgnK4z7llRViZE2",
+          "name": "Billable"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "Not enough predictions.\n\nExchange a star for a prediction or buy more stars.",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "da9b5459-f7af-4c1f-a245-f2e4254cd7fe",
+      "name": "TG: No Balance for Prediction",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        768
+      ],
+      "webhookId": "83be78f6-3ab4-4ba3-a045-fd421cbecf06",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "Could not exchange a star (e.g. not enough stars).\n\nUse the buttons below to get a prediction, buy stars, or try again.",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange fail)').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange fail)').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange fail)').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "69e6f959-6d82-4628-a266-402a96347f9c",
+      "name": "TG: Exchange failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1536,
+        1120
+      ],
+      "webhookId": "83be78f6-3ab4-4ba3-a045-fd421cbecf06",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "answerPreCheckoutQuery",
+        "preCheckoutQueryId": "={{ $json.pre_checkout_query.id }}"
+      },
+      "type": "n8n-nodes-telegram-stars.telegramStars",
+      "typeVersion": 1,
+      "position": [
+        -544,
+        32
+      ],
+      "id": "13e0f3a9-a11f-48d7-a9f3-7d05e64586d5",
+      "name": "Telegram Stars",
+      "credentials": {
+        "telegramStarsApi": {
+          "id": "9hVvDyivE0e6Gs8y",
+          "name": "billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "🤖 Hi! I am Billable API demo bot\n\nI can show you how to monetize your bot using Billable API.\n\nClick the button below to get your first free Star!",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Config').item.json.BTN_START_BONUS }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "af88288e-bbef-4a9c-ab96-9d9ff3cdc1f4",
+      "name": "TG: Start Msg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        176
+      ],
+      "webhookId": "3df24356-8b63-43a5-89a9-7f59d2f32399",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "✅ Successfully exchanged a star for a prediction!",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange ok)').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange ok)').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (exchange ok)').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "9dbdf834-fa09-4125-8665-c88634f1423d",
+      "name": "TG: Buy OK",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        960
+      ],
+      "webhookId": "83be78f6-3ab4-4ba3-a045-fd421cbecf06",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "title": "Prediction for a Star",
+        "description": "One Telegram Star for one prediction from the bot.",
+        "payload": "={{ $json.id }}",
+        "priceLabel": "Prediction",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-telegram-stars.telegramStars",
+      "typeVersion": 1,
+      "position": [
+        832,
+        1312
+      ],
+      "id": "b5aa3355-e85d-4b1b-9554-fab3c9ac88df",
+      "name": "Telegram Stars1",
+      "credentials": {
+        "telegramStarsApi": {
+          "id": "9hVvDyivE0e6Gs8y",
+          "name": "billable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "BILLABLE_URL",
+              "stringValue": "https://your-billable-domain.com"
+            },
+            {
+              "name": "BILLABLE_TOKEN",
+              "stringValue": "your-secret-api-token-here"
+            },
+            {
+              "name": "START_KEYBOARD",
+              "stringValue": "={{ {\n  \"rows\": [\n    { \"row\": { \"buttons\": [ { \"text\": \"🎁 Get free Star\" } ] } }\n  ],\n  \"options\": { \"resize_keyboard\": true, \"one_time_keyboard\": true }\n} }}"
+            },
+            {
+              "name": "BTN_START_BONUS",
+              "stringValue": "🎁 Get free Star"
+            },
+            {
+              "name": "CHAT_ID",
+              "stringValue": "={{ ($json.message?.chat?.id ?? $json.callback_query?.message?.chat?.id ?? $json.callback_query?.from?.id ?? $json.pre_checkout_query?.from?.id).toString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9ec0cf1c-99e0-46e2-aaab-4e1a1a06244b",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        -1216,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').item.json.CHAT_ID }}",
+        "text": "=🔮 **Result:** {{ $('Code: Prediction1').item.json.text }}",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (after pred)').item.json.BTN_PREDICT }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (after pred)').item.json.BTN_EXCHANGE }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $('Set Balance (after pred)').item.json.BTN_TOPUP }}",
+                    "additionalFields": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true,
+          "one_time_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "6f4ffb96-e627-4b1a-9a91-42bd188e00da",
+      "name": "TG: Pred OK",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1280,
+        608
+      ],
+      "webhookId": "df092e1b-a646-49f6-804a-c371ca02c28d",
+      "credentials": {
+        "telegramApi": {
+          "id": "UjXcOJKrdSDdELve",
+          "name": "Billable"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Telegram Trigger1": [
+      {
+        "json": {
+          "update_id": 450093254,
+          "pre_checkout_query": {
+            "id": "1383221126336906665",
+            "from": {
+              "id": 322056265,
+              "is_bot": false,
+              "first_name": "Alexey",
+              "last_name": "R",
+              "username": "Lexxar",
+              "language_code": "ru",
+              "is_premium": true
+            },
+            "currency": "XTR",
+            "total_amount": 1,
+            "invoice_payload": "3"
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "If: Has Prediction": {
+      "main": [
+        [
+          {
+            "node": "Code: Prediction1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG: No Balance for Prediction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Check Balance": {
+      "main": [
+        [
+          {
+            "node": "Set Pred Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Pred Balance": {
+      "main": [
+        [
+          {
+            "node": "If: Has Prediction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Create Order": {
+      "main": [
+        [
+          {
+            "node": "Telegram Stars1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Confirm Order": {
+      "main": [
+        [
+          {
+            "node": "Billable: Get Wallet (payment)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Main Router1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Main Router1": {
+      "main": [
+        [
+          {
+            "node": "Telegram Stars",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Confirm Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Create Acc1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Create Acc1": {
+      "main": [
+        [
+          {
+            "node": "Billable: Get Wallet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Get Wallet": {
+      "main": [
+        [
+          {
+            "node": "Set Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Balance": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Billable: Get Wallet (payment)": {
+      "main": [
+        [
+          {
+            "node": "Set Balance Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Balance Payment": {
+      "main": [
+        [
+          {
+            "node": "TG: Payment OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Get Wallet (exchange ok)": {
+      "main": [
+        [
+          {
+            "node": "Set Balance (exchange ok)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Balance (exchange ok)": {
+      "main": [
+        [
+          {
+            "node": "TG: Buy OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Get Wallet (exchange fail)": {
+      "main": [
+        [
+          {
+            "node": "Set Balance (exchange fail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Balance (exchange fail)": {
+      "main": [
+        [
+          {
+            "node": "TG: Exchange failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Final": {
+      "main": [
+        [
+          {
+            "node": "Command Router1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command Router1": {
+      "main": [
+        [
+          {
+            "node": "TG: Start Msg",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Bonus1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Check Balance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Give Pred1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Create Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG: Help Msg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Bonus1": {
+      "main": [
+        [
+          {
+            "node": "TG: Trial activated1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TG: Trial already used",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Prediction1": {
+      "main": [
+        [
+          {
+            "node": "Billable: Consume Pred1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Consume Pred1": {
+      "main": [
+        [
+          {
+            "node": "Billable: Check Balance (after consume)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Check Balance (after consume)": {
+      "main": [
+        [
+          {
+            "node": "Set Pred From Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Pred From Balance": {
+      "main": [
+        [
+          {
+            "node": "Merge (after pred)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Billable: Get Wallet (after pred)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Get Wallet (after pred)": {
+      "main": [
+        [
+          {
+            "node": "Merge (after pred)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge (after pred)": {
+      "main": [
+        [
+          {
+            "node": "Set Balance (after pred)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Balance (after pred)": {
+      "main": [
+        [
+          {
+            "node": "TG: Pred OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable: Give Pred1": {
+      "main": [
+        [
+          {
+            "node": "Billable: Get Wallet (exchange ok)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billable: Get Wallet (exchange fail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Stars1": {
+      "main": [
+        []
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "1ef3ca8f-6118-42d0-8bb8-83e2cdf48ecf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "51e4ccf6103cd92afac60b72882b16ef8e353b686e425f177ac4d3ff2b8494de"
+  },
+  "id": "uceegZ8rdmwUyv4y4mpWE",
+  "tags": []
+}

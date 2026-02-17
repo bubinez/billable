@@ -17,11 +17,24 @@ The module provides a single API and accounting layer for different orchestrator
 - **Offer System**: Flexible product bundles with configurable expiration periods.
 - **FIFO Consumption**: Automatic oldest-first quota consumption.
 - **Fraud Prevention**: Abstract identity hashing for trial abuse protection.
+- **Admin UI**: Built-in Django Admin integration with hierarchical usage reports and offer management.
+- **Signals & Webhooks**: Event-driven architecture for integrations (e.g., n8n, Zapier).
 - **Detachable Architecture**: No foreign keys to your business models (uses metadata).
 - **Idempotency**: Built-in protection against double-spending and duplicate payments.
 - **Customer Merging**: Service and API for consolidating user accounts without data loss.
 - **REST API**: Ready-to-use Django Ninja API for frontend or external orchestrators.
 - **Normalization Policy**: Consistent uppercase (CAPS) storage for technical identifiers (SKU, Product Key) with "silent" API normalization.
+
+---
+
+## 🤖 Live Demo
+
+See Billable in action! We've built a demonstration bot using **n8n** and Billable API.
+
+👉 **[Try the Demo Bot (@billable_demo_bot)](https://t.me/billable_demo_bot)**
+
+You can find the source workflow and setup instructions in the examples directory:
+📂 **[View n8n Integration Example](examples/n8n/README.md)**
 
 ---
 

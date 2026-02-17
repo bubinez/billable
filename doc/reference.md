@@ -30,7 +30,7 @@ from billable.models import ExternalIdentity, Product, Offer
 
 **Correct way to import services:**
 ```python
-from billable.services import TransactionService, BalanceService
+from billable.services import TransactionService, BalanceService, CustomerService
 ```
 
 **Async context (bots, ASGI):** Prefer async methods of the API and services (e.g. `TransactionService.acheck_quota`, `OrderService.acreate_order`) so as not to block the event loop.
@@ -50,8 +50,10 @@ The catalog of available resources.
     - `PERIOD`: Time-based access.
     - `QUANTITY`: Consumable units.
     - `UNLIMITED`: Permanent access.
-- **`is_active`**: Boolean flag. If False, cannot be used in new offers.
+- **`is_active`**: Boolean flag. If `False`, cannot be used in new offers.
+- **`is_currency`**: Boolean flag. If `True`, this product is treated as a currency (e.g. internal credits).
 - **`created_at`**: Timestamp.
+- **`metadata`**: Arbitrary JSON data.
 
 ### Referral (`billable_referrals`)
 Tracks links between inviters and invitees.
@@ -185,6 +187,55 @@ python manage.py migrate_identities stripe_id stripe --limit 100
 You can run the command multiple times with different fields and providers for the same user; that user will have multiple `ExternalIdentity` records (one per provider/external_id pair).
 
 ---
+
+### CustomerService
+
+Service for managing customer-related operations, particularly merging accounts.
+
+```python
+from billable.services import CustomerService
+
+# Merge source_user data into target_user
+# Moves all orders, quota batches, transactions, identities, and referrals.
+stats = CustomerService.merge_customers(target_user_id=101, source_user_id=102)
+# Returns: {'moved_orders': 2, 'moved_batches': 5, ...}
+
+# Async version
+stats = await CustomerService.amerge_customers(target_user_id=101, source_user_id=102)
+```
+
+## Admin Interface
+
+Billable provides enhanced Django Admin interfaces for managing products and analyzing customer usage.
+
+### Customer Product Report
+A hierarchical report view available in the Customer admin. It groups transactions by **QuotaBatch** (the source of funds), showing:
+1.  **Inflows:** How the product was acquired (Order, Offer, or Manual Grant).
+2.  **Spending:** How the product was consumed (Transactions).
+3.  **Running Balance:** The balance history calculated chronologically.
+
+This view helps support agents audit complex usage scenarios where a user has multiple active quotas for the same product.
+
+## Webhooks
+
+When integrating Billable with external systems (e.g., n8n, Zapier), you may need to implement specific webhook contracts.
+
+### Referral Bonus Granted
+
+Sent by the application layer when a referral bonus is successfully claimed (typically after the referee's first paid order).
+
+**Method:** `POST`  
+**Expected Payload (JSON):**
+
+```json
+{
+  "event": "referral_bonus_granted",
+  "referrer_external_id": "123456789", // e.g. Telegram Chat ID
+  "referee_external_id": "987654321",
+  "order_id": 55,                      // ID of the order that triggered the bonus
+  "idempotency_key": "referral_bonus:10:order:55" // Unique key for deduplication
+}
+```
 
 ## REST API Specification
 

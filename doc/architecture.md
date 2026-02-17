@@ -73,6 +73,7 @@ This flow is a specialized "buy with balance" mechanism:
 
 The system enforces a strict distinction between technical resources and commercial deals:
 
+-   **Product**: Fundamental unit of value (e.g., "Premium Subscription", "100 AI Credits"). Can be a boolean entitlement, a quantity, or a currency (`is_currency=True`).
 -   **Shared Namespace (Zero Collision)**: It is strictly forbidden for a `product_key` to match an Offer `sku`. Any attempt to create a duplicate at the DB level will trigger an error.
 -   **Contract Separation**:
     -   **Access/Balance** methods (checking rights) accept `product_key`.
