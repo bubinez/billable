@@ -71,16 +71,14 @@ Open the **Config** node (the first node in the workflow) and update the values:
 
 You need to configure **3 credentials** in n8n for this workflow to function:
 
-#### A. Billable API (HTTP Header Auth)
+#### A. Billable API (HTTP Bearer Auth)
 
 1. Go to **Credentials** > **New**.
-2. Search for **Header Auth**.
+2. Search for **HTTP Bearer Auth**.
 3. Name it `Billable API` (or similar).
-4. **Name**: `Authorization`
-5. **Value**: `Bearer <YOUR_BILLABLE_API_TOKEN>`
-   - *Replace `<YOUR_BILLABLE_API_TOKEN>` with the token from your Django settings.*
-   - **Important**: You **must** include the word `Bearer` followed by a space. The API code uses standard `HttpBearer` authentication and will reject the token without this prefix.
-6. Ensure all HTTP Request nodes in the workflow use this credential.
+4. **Token**: `<YOUR_BILLABLE_API_TOKEN>`
+   - *Enter only the token (e.g., `your-secret-key`). Do NOT add the "Bearer " prefix; n8n adds it automatically.*
+5. Ensure all HTTP Request nodes in the workflow use this credential.
 
 #### B. Telegram Bot
 Standard Telegram Bot API credential.
