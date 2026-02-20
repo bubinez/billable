@@ -249,5 +249,60 @@ async def on_first_purchase(sender, order, **kwargs):
 1.  **No Hardlinks**: No `ForeignKey` relationships to external application models. All links are logical (stored in metadata).
 2.  **Settings Based**: Configuration (API tokens, User model) is injected via Django `settings.py`.
 3.  **Event Driven**: Generates Django Signals (`order_confirmed`, `transaction_created`, `quota_consumed`) for decoupled integration with other local modules.
-4.  **Idempotency**: Built-in protection against double-spending and duplicate processing at both the Order and Transaction levels.
+4.  **Idempotency**: Built-in protection against double-spending and duplicate processing at both the Order and Transaction levels (specifically in `aconsume_quota`).
 5.  **Separation of Concerns**: The billing engine handles **accounting**, not **marketing**. Promotion logic belongs in your application layer.
+
+---
+
+## TransactionService API Reference
+
+`TransactionService` is the heart of the engine. Here is a summary of its core methods.
+
+| Sync Method | Async Method | Idempotency | Description |
+| :--- | :--- | :--- | :--- |
+| `check_quota` | `acheck_quota` | No | Quick check if balance > 0. |
+| `get_balance` | `aget_balance` | No | Returns total integer balance. |
+| `grant_offer` | `agrant_offer` | No* | Credits products from an Offer. |
+| `consume_quota`| `aconsume_quota`| **Yes** | FIFO debit with idempotency key. |
+| `exchange` | `aexchange` | No* | Internal currency swap for Offer. |
+
+*\* While grants don't have a direct `idempotency_key` argument, they are usually wrapped in Orders which DO support idempotency via `payment_id`.*
+
+---
+
+## Rich Transaction History (Metadata)
+
+All balance-changing methods (`aconsume_quota`, `agrant_offer`, `aexchange`) accept an optional `metadata` dictionary. 
+
+**Recommended Usage:**
+- Store business object IDs (e.g., `vacancy_id`, `order_id`).
+- Store human-readable context (e.g., `item_name`).
+- This allows the UI to show: *"Debit: 1 credit for 'Vacancy Response: Senior Python Dev'"* instead of just *"Debit: 1 credit"*.
+
+Example:
+```python
+await TransactionService.aconsume_quota(
+    user_id=123,
+    product_key="ANSWERS",
+    metadata={"question_id": 456, "topic": "Django"}
+)
+```
+
+---
+
+## Trial Abuse Protection (TrialHistory)
+
+`TrialHistory` uses a universal identity hashing model. To avoid collisions between different identity providers (e.g., Telegram ID `123` and a legacy User ID `123`), use the `provider:external_id` pattern.
+
+**Hashing Best Practices:**
+1. **Normalize**: Strip whitespace and lowercase the string.
+2. **Keying**: Use `provider:id` format (e.g., `tg:123456789`).
+3. **Storage**: Call `TrialHistory.generate_identity_hash(string)` for the `identity_hash` field.
+
+```python
+# Implementation example
+raw_id = " LINKEDIN:98765 "
+key = f"linkedin:{raw_id.strip().lower()}"
+hashed = TrialHistory.generate_identity_hash(key)
+# Result: SHA256 of "linkedin:98765"
+```

@@ -100,6 +100,8 @@ User's "wallet" of resources. Each batch represents a grant of a specific produc
 - **`state`**: ACTIVE, EXHAUSTED, EXPIRED, REVOKED.
 - **`created_at`**: Timestamp for FIFO ordering.
 
+> **Why multiple batches?** A user's total balance for a product is the sum of `remaining_quantity` across all ACTIVE batches. The system uses FIFO (First-In, First-Out) logic to consume from the oldest batches first.
+
 ### Transaction (`billable_transactions`)
 Immutable ledger of all balance changes.
 
@@ -109,8 +111,19 @@ Immutable ledger of all balance changes.
 - **`direction`**: CREDIT (grant) or DEBIT (consume).
 - **`action_type`**: Source (e.g., "purchase", "trial_activation", "usage").
 - **`object_id`**: Optional external reference.
-- **`metadata`**: Context (JSON).
+- **`metadata`**: Context (JSON). This field is critical for **Rich Transaction History**. Apps can store IDs (e.g., `message_id`) here.
 - **`created_at`**: Timestamp.
+
+#### Rich Transaction History (Metadata)
+Use the `metadata` field to provide context for balance changes. For example, when consuming quota for a vacancy response:
+```python
+TransactionService.aconsume_quota(
+    user_id=user.id,
+    product_key="VACANCY_RESPONSE",
+    metadata={"vacancy_id": "linkedin:12345", "vacancy_title": "Python Developer"}
+)
+```
+This allows the frontend to display a detailed log: *"Used for response to 'Python Developer' (ID: linkedin:12345)"*.
 
 ### Order (`billable_orders`)
 Represents a financial transaction intent.
@@ -141,13 +154,27 @@ Fraud prevention tool. **Does NOT enforce trial logic** — your application lay
     - `ahas_used_trial(identities: dict)`: Async check if any identity has used a trial.
     - `generate_identity_hash(value)`: Static method to hash identities.
 
+#### Identity Normalization & Hashing
+To prevent trial abuse across different platforms, follow the `provider:external_id` pattern.
+1. **Normalize**: Convert to lowercase and strip whitespace.
+2. **Hash**: Use `TrialHistory.generate_identity_hash()`.
+
+**Pattern**: `linkedin:12345`, `tg:5454776146`, `email:user@example.com`.
+
+```python
+# Recommended normalization before hashing
+raw_id = " LINKEDIN:12345 "
+normalized = raw_id.strip().lower() # "linkedin:12345"
+identity_hash = TrialHistory.generate_identity_hash(normalized)
+```
+
 ### ExternalIdentity (`billable_external_identities`)
 External identity mapping for integrations.
 
 - **`provider`** *(CharField, indexed, default=`"default"`)*: Identity source (e.g., `telegram`, `n8n`).
 - **`external_id`** *(CharField, indexed)*: Stable external identifier.
 - **`user`** *(FK, nullable)*: Optional link to `settings.AUTH_USER_MODEL`.
-- **`metadata`** *(JSONField)*: Provider-specific payload.
+- **`metadata`** *(JSONField)*: Provider-specific payload. Use this to store project-specific data (e.g., `bot_id`, `slug`, `category`) to avoid extending the library tables.
 - **Uniqueness**: `(provider, external_id)`.
 - **Methods**:
     - `get_user_by_identity(external_id, provider="default")`: Synchronously retrieves a User by their external identity.
@@ -185,6 +212,91 @@ python manage.py migrate_identities stripe_id stripe --limit 100
 ```
 
 You can run the command multiple times with different fields and providers for the same user; that user will have multiple `ExternalIdentity` records (one per provider/external_id pair).
+
+---
+
+## TransactionService API Reference
+
+The `TransactionService` is the primary interface for managing balances.
+
+### Methods Summary
+
+| Method | Sync / Async | Idempotency Support | Description |
+| :--- | :--- | :--- | :--- |
+| `check_quota` | Both | No | Returns whether user has enough balance. |
+| `consume_quota` | Both | **Yes** (via `idempotency_key`) | Debits balance. Returns usage ID. |
+| `grant_offer` | Both | No* | Grants products from an Offer. |
+| `grant_product` (Manual) | N/A | No* | (Internal) Use `grant_offer` for public API. |
+| `exchange` | Both | No* | Swaps internal currency for an Offer. |
+
+*\* Note: Credits (grants) do not have a built-in idempotency key. See [Migration Best Practices](#migration-best-practices) for implementation patterns.*
+
+#### API Signatures
+
+**Quota Check**
+```python
+# Sync
+res = TransactionService.check_quota(user_id=1, product_key="CREDITS")
+# Async
+res = await TransactionService.acheck_quota(user_id=1, product_key="CREDITS")
+# Returns: {"can_use": bool, "remaining": int, "message": str}
+```
+
+**Consumption**
+```python
+# Async (Recommended)
+res = await TransactionService.aconsume_quota(
+    user_id=user.id,
+    product_key="CREDITS",
+    amount=1,
+    idempotency_key="request_uuid_123",
+    metadata={"reason": "api_call"}
+)
+```
+
+**Granting (Purchase/Bonus)**
+```python
+# Sync
+batches = TransactionService.grant_offer(
+    user_id=user.id,
+    offer=offer_obj,
+    source="bonus",
+    metadata={"campaign": "early_bird"}
+)
+```
+
+---
+
+## Migration Best Practices
+
+When migrating balances from legacy systems, use the `TransactionService.grant_offer` (or internal logic) with protective metadata.
+
+### Pattern: Idempotent Migration
+Since `grant_offer` doesn't have a unique `idempotency_key`, use `metadata` to track the source ID:
+
+1. **Check**: Before granting, check if a transaction with `migration_source_id` already exists.
+2. **Grant**: If not found, grant the offer and store the source ID in metadata.
+
+```python
+def safe_migrate_balance(user_id, legacy_amount, migration_id):
+    # 1. Idempotency check via metadata
+    exists = Transaction.objects.filter(
+        user_id=user_id,
+        metadata__migration_source_id=migration_id
+    ).exists()
+    
+    if exists:
+        return
+        
+    # 2. Grant (e.g., using a special "Migration" offer)
+    offer = Offer.objects.get(sku="OFF_MIGRATION_CREDITS")
+    TransactionService.grant_offer(
+        user_id=user_id,
+        offer=offer,
+        source="migration",
+        metadata={"migration_source_id": migration_id, "original_amount": legacy_amount}
+    )
+```
 
 ---
 
@@ -438,43 +550,43 @@ Get a single active offer by SKU.
 - **Response (200)**: `OfferSchema`
 - **Response (404)**: `CommonResponse` — `{"success": false, "message": "Offer not found"}` if offer does not exist or is inactive.
 
-**Контракт ответа (OfferSchema):**
+**Response Contract (OfferSchema):**
 
-| Поле | Тип | Описание |
+| Field | Type | Description |
 |------|-----|----------|
-| `sku` | string | Коммерческий идентификатор (например `off_diamonds_100`, `pack_premium`). |
-| `name` | string | Отображаемое название оффера. |
-| `price` | number (Decimal) | Цена за единицу. |
-| `currency` | string | Код валюты: EUR, USD, XTR, INTERNAL и т.д. |
-| `description` | string | Описание для UI. |
-| `image` | string \| null | URL изображения или null. |
-| `is_active` | boolean | Видимость в каталоге. |
-| `items` | array | Список позиций оффера (продукты и количества). |
-| `metadata` | object | Доп. конфигурация (JSON). |
+| `sku` | string | Commercial identifier (e.g., `off_diamonds_100`, `pack_premium`). |
+| `name` | string | Display name of the offer. |
+| `price` | number (Decimal) | Price per unit. |
+| `currency` | string | Currency code: EUR, USD, XTR, INTERNAL, etc. |
+| `description` | string | Description for UI. |
+| `image` | string \| null | Image URL or null. |
+| `is_active` | boolean | Visibility in catalog. |
+| `items` | array | List of offer items (products and quantities). |
+| `metadata` | object | Additional configuration (JSON). |
 
-**Структура элемента `items` (OfferItemSchema):**
+**Structure of `items` element (OfferItemSchema):**
 
-| Поле | Тип | Описание |
+| Field | Type | Description |
 |------|-----|----------|
-| `product` | object | Продукт в позиции (см. ниже). |
-| `quantity` | integer | Количество единиц продукта в оффере. |
-| `period_unit` | string | Единица срока: DAYS, MONTHS, YEARS, FOREVER. |
-| `period_value` | integer \| null | Число для срока; null для FOREVER. |
+| `product` | object | Product in the position (see below). |
+| `quantity` | integer | Quantity of units of the product in the offer. |
+| `period_unit` | string | Period unit: DAYS, MONTHS, YEARS, FOREVER. |
+| `period_value` | integer \| null | Period value; null for FOREVER. |
 
-**Вложенный объект `product` (ProductSchema):**
+**Nested `product` object (ProductSchema):**
 
-| Поле | Тип | Описание |
+| Field | Type | Description |
 |------|-----|----------|
-| `id` | integer | PK продукта. |
-| `product_key` | string \| null | Идентификатор для учёта (например `diamonds`, `vip_access`). |
-| `name` | string | Отображаемое название продукта. |
-| `description` | string | Текстовое описание. |
+| `id` | integer | Product primary key. |
+| `product_key` | string \| null | Identifier for accounting (e.g., `diamonds`, `vip_access`). |
+| `name` | string | Display name of the product. |
+| `description` | string | Text description. |
 | `product_type` | string | PERIOD, QUANTITY, UNLIMITED. |
-| `is_active` | boolean | Доступность в новых офферах. |
-| `metadata` | object | JSON-конфигурация. |
-| `created_at` | string (datetime) | Время создания. |
+| `is_active` | boolean | Availability in new offers. |
+| `metadata` | object | JSON configuration. |
+| `created_at` | string (datetime) | Creation timestamp. |
 
-**Пример ответа (фрагмент):**
+**Response Example (fragment):**
 ```json
 [
   {
