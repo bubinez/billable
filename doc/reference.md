@@ -37,6 +37,79 @@ from billable.services import TransactionService, BalanceService, CustomerServic
 
 ---
 
+## Integration Examples
+
+This section contains practical examples (sync and async) intended for application-layer integrations.
+
+### Welcome Trial (TrialHistory + grant)
+
+```python
+from billable.models import Offer, TrialHistory
+from billable.services import TransactionService
+from asgiref.sync import sync_to_async
+
+class PromotionService:
+    @classmethod
+    async def claim_welcome_trial(cls, user_id: int, telegram_id: str):
+        # 1. Fraud check (using billable tool)
+        identities = {"telegram": telegram_id}
+        if await TrialHistory.ahas_used_trial(identities=identities):
+            return {"success": False, "reason": "trial_already_used"}
+        
+        # 2. Find trial offer (create in Django admin)
+        offer = await Offer.objects.aget(sku="off_welcome_trial")
+        
+        # 3. Grant using billable engine
+        batches = await sync_to_async(TransactionService.grant_offer)(
+            user_id=user_id,
+            offer=offer,
+            source="welcome_bonus"
+        )
+        
+        # 4. Mark as used
+        await TrialHistory.objects.acreate(
+            identity_type="telegram",
+            identity_hash=TrialHistory.generate_identity_hash(telegram_id),
+            trial_plan_name="Welcome Trial"
+        )
+        
+        return {"success": True, "batches": batches}
+```
+
+### Referral Bonus (signal handler + metadata contract)
+
+```python
+from django.dispatch import receiver
+from billable.signals import order_confirmed
+from billable.services import TransactionService
+
+@receiver(order_confirmed)
+async def on_first_purchase(sender, order, **kwargs):
+    # Check if this is the first purchase
+    if not await Order.objects.filter(user=order.user, status=Order.Status.PAID).exclude(id=order.id).aexists():
+        
+        # Atomically claim bonus
+        referral = await Referral.objects.filter(referee=order.user).afirst()
+        
+        if referral:
+             # Sync wrapper or async equivalent for model method required in async context
+             claimed = await sync_to_async(referral.claim_bonus)()
+             
+             if claimed:
+                bonus_offer = await Offer.objects.aget(sku="off_referral_bonus")
+                await sync_to_async(TransactionService.grant_offer)(
+                    user_id=referral.referrer_id,
+                    offer=bonus_offer,
+                    source="referral_bonus",
+                    metadata={
+                        "referee_id": referral.referee_id,  # Required for webhook payload
+                        "order_id": order.id,  # Required for webhook payload
+                    }
+                )
+```
+
+**Important**: When creating a referral bonus transaction, always include `referee_id` and `order_id` in the `metadata` parameter. This ensures that webhook payloads (e.g., `referral_bonus_granted` events) can include `referee_external_id` by looking up the referee's `ExternalIdentity` record. Without these fields in metadata, the webhook will only contain `referrer_external_id` and `referee_external_id` will be `null`.
+
 ## Data Models
 
 All database tables are prefixed with `billable_`. In every model, *user* (FK to `settings.AUTH_USER_MODEL`) denotes the **Billing account** — the entity to which orders and product rights are attributed.
@@ -224,9 +297,8 @@ The `TransactionService` is the primary interface for managing balances.
 | Method | Sync / Async | Idempotency Support | Description |
 | :--- | :--- | :--- | :--- |
 | `check_quota` | Both | No | Returns whether user has enough balance. |
-| `consume_quota` | Both | **Yes** (via `idempotency_key`) | Debits balance. Returns usage ID. |
+| `consume_quota` / `aconsume_quota` | Both | **Yes** (via `idempotency_key`) | Debits balance using FIFO. Returns usage ID and metadata. |
 | `grant_offer` | Both | No* | Grants products from an Offer. |
-| `grant_product` (Manual) | N/A | No* | (Internal) Use `grant_offer` for public API. |
 | `exchange` | Both | No* | Swaps internal currency for an Offer. |
 
 *\* Note: Credits (grants) do not have a built-in idempotency key. See [Migration Best Practices](#migration-best-practices) for implementation patterns.*
@@ -244,13 +316,24 @@ res = await TransactionService.acheck_quota(user_id=1, product_key="CREDITS")
 
 **Consumption**
 ```python
-# Async (Recommended)
+# Sync
+res = TransactionService.consume_quota(
+    user_id=user.id,
+    product_key="CREDITS",
+    amount=1,
+    action_type="usage",
+    idempotency_key="request_uuid_123",
+    metadata={"vacancy_id": "linkedin:12345", "vacancy_title": "Senior Python Developer"}
+)
+
+# Async
 res = await TransactionService.aconsume_quota(
     user_id=user.id,
     product_key="CREDITS",
     amount=1,
+    action_type="usage",
     idempotency_key="request_uuid_123",
-    metadata={"reason": "api_call"}
+    metadata={"vacancy_id": "linkedin:12345", "vacancy_title": "Senior Python Developer"}
 )
 ```
 
@@ -263,19 +346,67 @@ batches = TransactionService.grant_offer(
     source="bonus",
     metadata={"campaign": "early_bird"}
 )
+
+# Async
+batches = await TransactionService.agrant_offer(
+    user_id=user.id,
+    offer=offer_obj,
+    source="bonus",
+    metadata={"campaign": "early_bird"}
+)
 ```
+
+#### Idempotency Matrix (Important)
+
+- `check_quota` / `acheck_quota`: no idempotency key.
+- `consume_quota` / `aconsume_quota`: supports `idempotency_key`; repeated calls with the same key return the previously created usage.
+- `grant_offer` / `agrant_offer`: no built-in idempotency key.
+- `exchange` / `aexchange`: no dedicated idempotency key argument; idempotency must be ensured at the integration layer if required.
+
+---
+
+## Rich Transaction History (Metadata)
+
+Use transaction `metadata` to bind each debit/credit to a concrete business object (vacancy, report, campaign, migration record). This is the primary way to build a human-readable ledger in UI.
+
+### Example: `aconsume_quota` linked to vacancy
+
+```python
+# Sync
+TransactionService.consume_quota(
+    user_id=user.id,
+    product_key="VACANCY_RESPONSE",
+    action_type="usage",
+    idempotency_key="vacancy-response:linkedin:12345:user:42",
+    metadata={"vacancy_id": "linkedin:12345", "vacancy_title": "Senior Python Developer"}
+)
+
+# Async
+await TransactionService.aconsume_quota(
+    user_id=user.id,
+    product_key="VACANCY_RESPONSE",
+    action_type="usage",
+    idempotency_key="vacancy-response:linkedin:12345:user:42",
+    metadata={"vacancy_id": "linkedin:12345", "vacancy_title": "Senior Python Developer"}
+)
+```
+
+Frontend can use `metadata.vacancy_title` and `metadata.vacancy_id` from transaction history endpoint (`GET /wallet/transactions`) to render records like:
+- "Debited for response to vacancy 'Senior Python Developer'"
+- "Source: linkedin:12345"
 
 ---
 
 ## Migration Best Practices
 
-When migrating balances from legacy systems, use the `TransactionService.grant_offer` (or internal logic) with protective metadata.
+When migrating balances from legacy systems, use `TransactionService.grant_offer` with protective metadata and explicit deduplication check.
 
 ### Pattern: Idempotent Migration
-Since `grant_offer` doesn't have a unique `idempotency_key`, use `metadata` to track the source ID:
+Since `grant_offer` / `agrant_offer` don't have `idempotency_key`, use `metadata.migration_source_id` as your integration-level idempotency marker.
 
 1. **Check**: Before granting, check if a transaction with `migration_source_id` already exists.
 2. **Grant**: If not found, grant the offer and store the source ID in metadata.
+3. **Key format**: Prefer provider-scoped keys like `legacy_system:record_id` to avoid collisions between migration sources.
 
 ```python
 def safe_migrate_balance(user_id, legacy_amount, migration_id):
@@ -295,6 +426,24 @@ def safe_migrate_balance(user_id, legacy_amount, migration_id):
         offer=offer,
         source="migration",
         metadata={"migration_source_id": migration_id, "original_amount": legacy_amount}
+    )
+```
+
+```python
+async def asafe_migrate_balance(user_id, migration_id):
+    exists = await Transaction.objects.filter(
+        user_id=user_id,
+        metadata__migration_source_id=migration_id
+    ).aexists()
+    if exists:
+        return
+
+    offer = await Offer.objects.aget(sku="OFF_MIGRATION_CREDITS")
+    await TransactionService.agrant_offer(
+        user_id=user_id,
+        offer=offer,
+        source="migration",
+        metadata={"migration_source_id": migration_id}
     )
 ```
 

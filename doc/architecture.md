@@ -169,78 +169,9 @@ The module exposes Python services for internal usage (Workers/Celery). For use 
 
 The `billable` module provides **building blocks**, not complete promotion campaigns. Here's the recommended pattern:
 
-### Example: Welcome Trial
-
-**In your application code** (e.g., `your_app/services/promotion_service.py`):
-
-```python
-from billable.models import Offer, TrialHistory
-from billable.services import TransactionService
-from asgiref.sync import sync_to_async
-
-class PromotionService:
-    @classmethod
-    async def claim_welcome_trial(cls, user_id: int, telegram_id: str):
-        # 1. Fraud check (using billable tool)
-        identities = {"telegram": telegram_id}
-        if await TrialHistory.ahas_used_trial(identities=identities):
-            return {"success": False, "reason": "trial_already_used"}
-        
-        # 2. Find trial offer (create in Django admin)
-        offer = await Offer.objects.aget(sku="off_welcome_trial")
-        
-        # 3. Grant using billable engine
-        batches = await sync_to_async(TransactionService.grant_offer)(
-            user_id=user_id,
-            offer=offer,
-            source="welcome_bonus"
-        )
-        
-        # 4. Mark as used
-        await TrialHistory.objects.acreate(
-            identity_type="telegram",
-            identity_hash=TrialHistory.generate_identity_hash(telegram_id),
-            trial_plan_name="Welcome Trial"
-        )
-        
-        return {"success": True, "batches": batches}
-```
-
-### Example: Referral Bonus
-
-**Subscribe to signals** (in `your_app/signals/handlers.py`):
-
-```python
-from django.dispatch import receiver
-from billable.signals import order_confirmed
-from billable.services import TransactionService
-
-@receiver(order_confirmed)
-async def on_first_purchase(sender, order, **kwargs):
-    # Check if this is the first purchase
-    if not await Order.objects.filter(user=order.user, status=Order.Status.PAID).exclude(id=order.id).aexists():
-        
-        # Atomically claim bonus
-        referral = await Referral.objects.filter(referee=order.user).afirst()
-        
-        if referral:
-             # Sync wrapper or async equivalent for model method required in async context
-             claimed = await sync_to_async(referral.claim_bonus)()
-             
-             if claimed:
-                bonus_offer = await Offer.objects.aget(sku="off_referral_bonus")
-                await sync_to_async(TransactionService.grant_offer)(
-                    user_id=referral.referrer_id,
-                    offer=bonus_offer,
-                    source="referral_bonus",
-                    metadata={
-                        "referee_id": referral.referee_id,  # Required for webhook payload
-                        "order_id": order.id,  # Required for webhook payload
-                    }
-                )
-```
-
-**Important**: When creating a referral bonus transaction, always include `referee_id` and `order_id` in the `metadata` parameter. This ensures that webhook payloads (e.g., `referral_bonus_granted` events) can include `referee_external_id` by looking up the referee's `ExternalIdentity` record. Without these fields in metadata, the webhook will only contain `referrer_external_id` and `referee_external_id` will be `null`.
+See `doc/reference.md` for implementation examples:
+- Welcome trial flow (TrialHistory + grant).
+- Referral bonus flow (signal handler + metadata contract).
 
 ---
 
@@ -279,14 +210,7 @@ All balance-changing methods (`aconsume_quota`, `agrant_offer`, `aexchange`) acc
 - Store human-readable context (e.g., `item_name`).
 - This allows the UI to show: *"Debit: 1 credit for 'Vacancy Response: Senior Python Dev'"* instead of just *"Debit: 1 credit"*.
 
-Example:
-```python
-await TransactionService.aconsume_quota(
-    user_id=123,
-    product_key="ANSWERS",
-    metadata={"question_id": 456, "topic": "Django"}
-)
-```
+For a complete set of sync/async examples and recommended metadata keys, see `doc/reference.md` ("Rich Transaction History (Metadata)").
 
 ---
 
@@ -299,10 +223,4 @@ await TransactionService.aconsume_quota(
 2. **Keying**: Use `provider:id` format (e.g., `tg:123456789`).
 3. **Storage**: Call `TrialHistory.generate_identity_hash(string)` for the `identity_hash` field.
 
-```python
-# Implementation example
-raw_id = " LINKEDIN:98765 "
-key = f"linkedin:{raw_id.strip().lower()}"
-hashed = TrialHistory.generate_identity_hash(key)
-# Result: SHA256 of "linkedin:98765"
-```
+This pattern prevents collisions between identical numeric IDs from different providers (for example: `linkedin:12345` and `telegram:12345`).

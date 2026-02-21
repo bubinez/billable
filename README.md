@@ -41,10 +41,10 @@ You can find the source workflow and setup instructions in the examples director
 ## Documentation
 
 - 📘 **[Architecture & Design](doc/architecture.md)**
-  Deep dive into Business Processes, Order Flow, Ledger, and Transaction Engine. Includes **TransactionService API** and **Trial Protection** guides.
+  Deep dive into Business Processes, Order Flow, Ledger, and Transaction Engine. Includes **TransactionService API**, **Rich Transaction History (metadata)**, and **Trial Protection** guides.
   
 - 📙 **[API & Models Reference](doc/reference.md)**
-  Database schema, Migration Best Practices (idempotency), and REST API specification.
+  Database schema, full `TransactionService` method reference (idempotency matrix), migration best practices, and REST API specification.
 
 - 📋 **Changelog**: See repository releases or git history.
 
